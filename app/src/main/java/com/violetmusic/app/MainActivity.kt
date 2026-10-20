@@ -1,4 +1,3 @@
-
 package com.violetmusic.app
 
 import android.content.Context
@@ -93,25 +92,28 @@ class MainActivity : ComponentActivity() {
                     secondary = VioletLight
                 )
             ) {
-                VioletMusicApp()
+                MusicApp()
             }
         }
     }
 }
 
 @Composable
-private fun VioletMusicApp() {
+private fun MusicApp() {
     val context = LocalContext.current
+
     val preferences = remember {
-        context.getSharedPreferences("violet_library", Context.MODE_PRIVATE)
+        context.getSharedPreferences("music_library", Context.MODE_PRIVATE)
     }
 
     val songs = remember {
         mutableStateListOf<ImportedSong>().apply {
             val count = preferences.getInt("count", 0)
+
             repeat(count) { index ->
                 val uriText = preferences.getString("uri_$index", null)
                 val title = preferences.getString("title_$index", null)
+
                 if (uriText != null && title != null) {
                     add(ImportedSong(title, Uri.parse(uriText)))
                 }
@@ -121,7 +123,10 @@ private fun VioletMusicApp() {
 
     val favorites = remember {
         mutableStateListOf<String>().apply {
-            addAll(preferences.getStringSet("favorites", emptySet()) ?: emptySet())
+            addAll(
+                preferences.getStringSet("favorites", emptySet())
+                    ?: emptySet()
+            )
         }
     }
 
@@ -135,7 +140,9 @@ private fun VioletMusicApp() {
     var isPlaying by remember { mutableStateOf(false) }
     var playbackPosition by remember { mutableLongStateOf(0L) }
     var playbackDuration by remember { mutableLongStateOf(0L) }
-    var statusMessage by remember { mutableStateOf("Importa tu música para comenzar") }
+    var statusMessage by remember {
+        mutableStateOf("Importa tu música para comenzar")
+    }
     var selectedTab by remember { mutableStateOf(MusicTab.HOME) }
     var showFullPlayer by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
@@ -144,10 +151,12 @@ private fun VioletMusicApp() {
     fun saveLibrary() {
         preferences.edit().apply {
             putInt("count", songs.size)
+
             songs.forEachIndexed { index, song ->
                 putString("uri_$index", song.uri.toString())
                 putString("title_$index", song.title)
             }
+
             apply()
         }
     }
@@ -160,11 +169,13 @@ private fun VioletMusicApp() {
 
     fun toggleFavorite(song: ImportedSong) {
         val key = song.uri.toString()
+
         if (favorites.contains(key)) {
             favorites.remove(key)
         } else {
             favorites.add(key)
         }
+
         saveFavorites()
     }
 
@@ -190,6 +201,7 @@ private fun VioletMusicApp() {
             playbackDuration = 0L
             player.prepare()
             player.play()
+
             statusMessage = "Reproduciendo"
             showFullPlayer = true
         } catch (_: Exception) {
@@ -199,6 +211,7 @@ private fun VioletMusicApp() {
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
+
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
@@ -214,9 +227,11 @@ private fun VioletMusicApp() {
 
             override fun onPlaybackStateChanged(state: Int) {
                 playbackDuration = player.duration.coerceAtLeast(0L)
+
                 if (state == Player.STATE_ENDED) {
                     isPlaying = false
                 }
+
                 if (state == Player.STATE_READY) {
                     statusMessage = if (player.isPlaying) {
                         "Reproduciendo"
@@ -245,9 +260,13 @@ private fun VioletMusicApp() {
     LaunchedEffect(player) {
         while (true) {
             if (player.isPlaying) {
-                playbackPosition = player.currentPosition.coerceAtLeast(0L)
-                playbackDuration = player.duration.coerceAtLeast(0L)
+                playbackPosition =
+                    player.currentPosition.coerceAtLeast(0L)
+
+                playbackDuration =
+                    player.duration.coerceAtLeast(0L)
             }
+
             delay(400)
         }
     }
@@ -255,7 +274,9 @@ private fun VioletMusicApp() {
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        if (uris.isEmpty()) {
+            return@rememberLauncherForActivityResult
+        }
 
         val oldCount = songs.size
         var addedCount = 0
@@ -267,7 +288,7 @@ private fun VioletMusicApp() {
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: Exception) {
-                // Algunos proveedores no permiten conservar el permiso.
+                // El proveedor puede no permitir conservar el permiso.
             }
 
             val title = context.contentResolver.query(
@@ -277,7 +298,9 @@ private fun VioletMusicApp() {
                 null,
                 null
             )?.use { cursor ->
-                val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val column =
+                    cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+
                 if (cursor.moveToFirst() && column >= 0) {
                     cursor.getString(column)
                 } else {
@@ -302,11 +325,14 @@ private fun VioletMusicApp() {
     }
 
     val currentSong = songs.getOrNull(currentIndex)
-    val progress = if (playbackDuration > 0L) {
-        playbackPosition.toFloat() / playbackDuration.toFloat()
-    } else {
-        0f
-    }.coerceIn(0f, 1f)
+
+    val progress = (
+        if (playbackDuration > 0L) {
+            playbackPosition.toFloat() / playbackDuration.toFloat()
+        } else {
+            0f
+        }
+    ).coerceIn(0f, 1f)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -334,14 +360,19 @@ private fun VioletMusicApp() {
                         statusMessage = statusMessage,
                         playbackSpeed = playbackSpeed,
                         speedMenuExpanded = speedMenuExpanded,
-                        onSpeedMenuChange = { speedMenuExpanded = it },
+                        onSpeedMenuChange = {
+                            speedMenuExpanded = it
+                        },
                         onSpeedChange = {
                             playbackSpeed = it
-                            player.playbackParameters = PlaybackParameters(it)
+                            player.playbackParameters =
+                                PlaybackParameters(it)
                         },
                         onSeek = { fraction ->
                             if (playbackDuration > 0L) {
-                                val position = (fraction * playbackDuration).toLong()
+                                val position =
+                                    (fraction * playbackDuration).toLong()
+
                                 player.seekTo(position)
                                 playbackPosition = position
                             }
@@ -371,17 +402,29 @@ private fun VioletMusicApp() {
                         },
                         onRepeat = {
                             player.repeatMode = when (player.repeatMode) {
-                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                Player.REPEAT_MODE_ONE -> Player.REPEAT_MODE_OFF
-                                else -> Player.REPEAT_MODE_ALL
+                                Player.REPEAT_MODE_ALL ->
+                                    Player.REPEAT_MODE_ONE
+
+                                Player.REPEAT_MODE_ONE ->
+                                    Player.REPEAT_MODE_OFF
+
+                                else ->
+                                    Player.REPEAT_MODE_ALL
                             }
                         },
                         onShuffle = {
-                            player.shuffleModeEnabled = !player.shuffleModeEnabled
+                            player.shuffleModeEnabled =
+                                !player.shuffleModeEnabled
                         },
-                        onMinimize = { showFullPlayer = false },
-                        isFavorite = favorites.contains(currentSong.uri.toString()),
-                        onFavorite = { toggleFavorite(currentSong) }
+                        onMinimize = {
+                            showFullPlayer = false
+                        },
+                        isFavorite = favorites.contains(
+                            currentSong.uri.toString()
+                        ),
+                        onFavorite = {
+                            toggleFavorite(currentSong)
+                        }
                     )
                 } else {
                     MainContent(
@@ -391,9 +434,15 @@ private fun VioletMusicApp() {
                         currentIndex = currentIndex,
                         isPlaying = isPlaying,
                         statusMessage = statusMessage,
-                        onImport = { audioPicker.launch(arrayOf("audio/*")) },
-                        onPlaySong = { playSong(it) },
-                        onFavorite = { toggleFavorite(it) }
+                        onImport = {
+                            audioPicker.launch(arrayOf("audio/*"))
+                        },
+                        onPlaySong = {
+                            playSong(it)
+                        },
+                        onFavorite = {
+                            toggleFavorite(it)
+                        }
                     )
                 }
             }
@@ -406,7 +455,9 @@ private fun VioletMusicApp() {
                     position = playbackPosition,
                     duration = playbackDuration,
                     progress = progress,
-                    onOpen = { showFullPlayer = true },
+                    onOpen = {
+                        showFullPlayer = true
+                    },
                     onPlayPause = {
                         if (player.isPlaying) {
                             player.pause()
@@ -476,7 +527,7 @@ private fun MainContent(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "V",
+                        "M",
                         color = Color.White,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black
@@ -487,17 +538,18 @@ private fun MainContent(
 
                 Column {
                     Text(
-                        "VIOLET",
+                        "MÚSICA",
                         color = MainText,
                         fontSize = 21.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 2.sp
                     )
+
                     Text(
-                        "M U S I C",
+                        "TU RITMO, TU ESPACIO",
                         color = VioletLight,
                         fontSize = 9.sp,
-                        letterSpacing = 3.sp
+                        letterSpacing = 2.sp
                     )
                 }
             }
@@ -533,7 +585,9 @@ private fun MainContent(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
                         )
+
                         Spacer(Modifier.height(12.dp))
+
                         Text(
                             "Siente cada\nnota.",
                             color = MainText,
@@ -541,13 +595,17 @@ private fun MainContent(
                             lineHeight = 39.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
+
                         Spacer(Modifier.height(8.dp))
+
                         Text(
                             "Tu música. Tu ritmo. Tu espacio.",
                             color = Color(0xFFD1C2DE),
                             fontSize = 13.sp
                         )
+
                         Spacer(Modifier.height(12.dp))
+
                         Text(
                             statusMessage,
                             color = VioletLight,
@@ -583,9 +641,15 @@ private fun MainContent(
                             song = song,
                             isCurrent = index == currentIndex,
                             isPlaying = index == currentIndex && isPlaying,
-                            isFavorite = favorites.contains(song.uri.toString()),
-                            onClick = { onPlaySong(index) },
-                            onFavorite = { onFavorite(song) }
+                            isFavorite = favorites.contains(
+                                song.uri.toString()
+                            ),
+                            onClick = {
+                                onPlaySong(index)
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -619,9 +683,15 @@ private fun MainContent(
                             song = song,
                             isCurrent = index == currentIndex,
                             isPlaying = index == currentIndex && isPlaying,
-                            isFavorite = favorites.contains(song.uri.toString()),
-                            onClick = { onPlaySong(index) },
-                            onFavorite = { onFavorite(song) }
+                            isFavorite = favorites.contains(
+                                song.uri.toString()
+                            ),
+                            onClick = {
+                                onPlaySong(index)
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -656,13 +726,18 @@ private fun MainContent(
                         key = { _, song -> song.uri.toString() }
                     ) { _, song ->
                         val originalIndex = songs.indexOf(song)
+
                         SongRow(
                             song = song,
                             isCurrent = originalIndex == currentIndex,
                             isPlaying = originalIndex == currentIndex && isPlaying,
                             isFavorite = true,
-                            onClick = { onPlaySong(originalIndex) },
-                            onFavorite = { onFavorite(song) }
+                            onClick = {
+                                onPlaySong(originalIndex)
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -677,10 +752,11 @@ private fun MainContent(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
                 item {
                     EmptyPanel(
                         title = "Tus listas, a tu manera",
-                        message = "La creación y edición de playlists se añadirá en una siguiente actualización. No hay botones simulados en esta pantalla.",
+                        message = "La creación y edición de playlists se añadirá en una siguiente actualización.",
                         action = null,
                         onAction = {}
                     )
@@ -708,6 +784,7 @@ private fun SectionHeader(
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold
             )
+
             Text(
                 subtitle,
                 color = MutedText,
@@ -747,15 +824,23 @@ private fun EmptyPanel(
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("♫", color = VioletLight, fontSize = 40.sp)
+        Text(
+            "♫",
+            color = VioletLight,
+            fontSize = 40.sp
+        )
+
         Spacer(Modifier.height(10.dp))
+
         Text(
             title,
             color = MainText,
             fontWeight = FontWeight.Bold,
             fontSize = 16.sp
         )
+
         Spacer(Modifier.height(6.dp))
+
         Text(
             message,
             color = MutedText,
@@ -764,6 +849,7 @@ private fun EmptyPanel(
 
         if (action != null) {
             Spacer(Modifier.height(16.dp))
+
             Text(
                 action,
                 modifier = Modifier
@@ -792,7 +878,9 @@ private fun SongRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(17.dp))
-            .background(if (isCurrent) Color(0xFF2A1D39) else Panel)
+            .background(
+                if (isCurrent) Color(0xFF2A1D39) else Panel
+            )
             .border(
                 1.dp,
                 if (isCurrent) Violet.copy(alpha = 0.6f) else PanelLight,
@@ -818,10 +906,15 @@ private fun SongRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+
             Spacer(Modifier.height(4.dp))
+
             Text(
-                if (isCurrent && isPlaying) "Reproduciendo ahora"
-                else "Archivo de tu dispositivo",
+                if (isCurrent && isPlaying) {
+                    "Reproduciendo ahora"
+                } else {
+                    "Archivo de tu dispositivo"
+                },
                 color = if (isCurrent) VioletLight else MutedText,
                 fontSize = 11.sp
             )
@@ -865,25 +958,39 @@ private fun SongArtwork(
             .clip(RoundedCornerShape(14.dp))
             .background(
                 Brush.linearGradient(
-                    listOf(Color(0xFFB28AFF), Color(0xFF392064))
+                    listOf(
+                        Color(0xFFB28AFF),
+                        Color(0xFF392064)
+                    )
                 )
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (artwork.bitmap != null) {
+        // Corrección: guardamos la propiedad en una variable local.
+        // Esto evita el error de smart cast con propiedades delegadas.
+        val artworkBitmap = artwork.bitmap
+
+        if (artworkBitmap != null) {
             Image(
-                bitmap = artwork.bitmap.asImageBitmap(),
+                bitmap = artworkBitmap.asImageBitmap(),
                 contentDescription = "Portada de ${song.title}",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
         } else {
-            Text("♫", color = Color.White, fontSize = 27.sp)
+            Text(
+                "♫",
+                color = Color.White,
+                fontSize = 27.sp
+            )
         }
     }
 }
 
-private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
+private fun readSongArtwork(
+    context: Context,
+    uri: Uri
+): SongArtwork {
     val retriever = MediaMetadataRetriever()
 
     return try {
@@ -894,6 +1001,7 @@ private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
         )
 
         val bytes = retriever.embeddedPicture
+
         val bitmap = if (bytes != null) {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } else {
@@ -907,7 +1015,7 @@ private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
         try {
             retriever.release()
         } catch (_: Exception) {
-            // No es necesario interrumpir la interfaz si falla la liberación.
+            // Evita interrumpir la interfaz si falla la liberación.
         }
     }
 }
@@ -930,18 +1038,23 @@ private fun MiniPlayer(
             .padding(horizontal = 10.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFF251A33))
-            .border(1.dp, Color(0xFF4A315D), RoundedCornerShape(18.dp))
+            .border(
+                1.dp,
+                Color(0xFF4A315D),
+                RoundedCornerShape(18.dp)
+            )
             .clickable(onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 9.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SongArtwork(song, Modifier.size(42.dp))
+            SongArtwork(
+                song,
+                Modifier.size(42.dp)
+            )
+
             Spacer(Modifier.width(10.dp))
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     song.title,
                     color = MainText,
@@ -950,6 +1063,7 @@ private fun MiniPlayer(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
                 Text(
                     statusMessage,
                     color = MutedText,
@@ -996,8 +1110,17 @@ private fun MiniPlayer(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(formatTime(position), color = MutedText, fontSize = 9.sp)
-            Text(formatTime(duration), color = MutedText, fontSize = 9.sp)
+            Text(
+                formatTime(position),
+                color = MutedText,
+                fontSize = 9.sp
+            )
+
+            Text(
+                formatTime(duration),
+                color = MutedText,
+                fontSize = 9.sp
+            )
         }
     }
 }
@@ -1040,8 +1163,13 @@ private fun FullPlayerScreen(
         ?.takeIf { it.isNotBlank() }
         ?: song.title
 
-    var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
-    var shuffleEnabled by remember { mutableStateOf(player.shuffleModeEnabled) }
+    var repeatMode by remember {
+        mutableIntStateOf(player.repeatMode)
+    }
+
+    var shuffleEnabled by remember {
+        mutableStateOf(player.shuffleModeEnabled)
+    }
 
     LaunchedEffect(player) {
         while (true) {
@@ -1081,8 +1209,9 @@ private fun FullPlayerScreen(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 2.sp
                 )
+
                 Text(
-                    "VIOLET MUSIC",
+                    "MÚSICA",
                     color = MutedText,
                     fontSize = 9.sp,
                     letterSpacing = 2.sp
@@ -1112,35 +1241,54 @@ private fun FullPlayerScreen(
                 .clip(RoundedCornerShape(28.dp))
                 .background(
                     Brush.linearGradient(
-                        listOf(Color(0xFF392052), Color(0xFF21142F), Panel)
+                        listOf(
+                            Color(0xFF392052),
+                            Color(0xFF21142F),
+                            Panel
+                        )
                     )
                 )
-                .border(1.dp, Color(0xFF51336C), RoundedCornerShape(28.dp)),
+                .border(
+                    1.dp,
+                    Color(0xFF51336C),
+                    RoundedCornerShape(28.dp)
+                ),
             contentAlignment = Alignment.Center
         ) {
-            if (artwork.bitmap != null) {
+            // Corrección aplicada también en el reproductor completo.
+            val artworkBitmap = artwork.bitmap
+
+            if (artworkBitmap != null) {
                 Image(
-                    bitmap = artwork.bitmap.asImageBitmap(),
+                    bitmap = artworkBitmap.asImageBitmap(),
                     contentDescription = "Portada de $displayTitle",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
-                        "V",
+                        "M",
                         color = VioletLight,
                         fontSize = 100.sp,
                         fontWeight = FontWeight.Black
                     )
+
                     Text(
-                        "VIOLET",
+                        "MÚSICA",
                         color = MainText,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 5.sp
                     )
-                    Text("M U S I C", color = VioletLight, fontSize = 10.sp)
+
+                    Text(
+                        "TU RITMO",
+                        color = VioletLight,
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
@@ -1156,7 +1304,9 @@ private fun FullPlayerScreen(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+
             Spacer(Modifier.height(5.dp))
+
             Text(
                 statusMessage,
                 color = MutedText,
@@ -1182,8 +1332,17 @@ private fun FullPlayerScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(formatTime(position), color = MutedText, fontSize = 11.sp)
-            Text(formatTime(duration), color = MutedText, fontSize = 11.sp)
+            Text(
+                formatTime(position),
+                color = MutedText,
+                fontSize = 11.sp
+            )
+
+            Text(
+                formatTime(duration),
+                color = MutedText,
+                fontSize = 11.sp
+            )
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1197,7 +1356,9 @@ private fun FullPlayerScreen(
                 if (shuffleEnabled) "⤨ ACTIVADO" else "⤨ ALEATORIO",
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (shuffleEnabled) PanelLight else Background)
+                    .background(
+                        if (shuffleEnabled) PanelLight else Background
+                    )
                     .clickable(onClick = onShuffle)
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 color = if (shuffleEnabled) VioletLight else MutedText,
@@ -1212,10 +1373,20 @@ private fun FullPlayerScreen(
                 },
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (repeatMode != Player.REPEAT_MODE_OFF) PanelLight else Background)
+                    .background(
+                        if (repeatMode != Player.REPEAT_MODE_OFF) {
+                            PanelLight
+                        } else {
+                            Background
+                        }
+                    )
                     .clickable(onClick = onRepeat)
                     .padding(horizontal = 10.dp, vertical = 9.dp),
-                color = if (repeatMode != Player.REPEAT_MODE_OFF) VioletLight else MutedText,
+                color = if (repeatMode != Player.REPEAT_MODE_OFF) {
+                    VioletLight
+                } else {
+                    MutedText
+                },
                 fontSize = 10.sp
             )
 
@@ -1225,7 +1396,9 @@ private fun FullPlayerScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(PanelLight)
-                        .clickable { onSpeedMenuChange(true) }
+                        .clickable {
+                            onSpeedMenuChange(true)
+                        }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     color = VioletLight,
                     fontSize = 11.sp,
@@ -1234,11 +1407,23 @@ private fun FullPlayerScreen(
 
                 DropdownMenu(
                     expanded = speedMenuExpanded,
-                    onDismissRequest = { onSpeedMenuChange(false) }
+                    onDismissRequest = {
+                        onSpeedMenuChange(false)
+                    }
                 ) {
-                    listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f).forEach { speed ->
+                    listOf(
+                        0.5f,
+                        0.75f,
+                        1f,
+                        1.25f,
+                        1.5f,
+                        1.75f,
+                        2f
+                    ).forEach { speed ->
                         DropdownMenuItem(
-                            text = { Text("${speed}×") },
+                            text = {
+                                Text("${speed}×")
+                            },
                             onClick = {
                                 onSpeedChange(speed)
                                 onSpeedMenuChange(false)
@@ -1325,8 +1510,12 @@ private fun BottomNavigationBar(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(if (selected) PanelLight else Color.Transparent)
-                    .clickable { onSelect(tab) }
+                    .background(
+                        if (selected) PanelLight else Color.Transparent
+                    )
+                    .clickable {
+                        onSelect(tab)
+                    }
                     .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -1335,12 +1524,18 @@ private fun BottomNavigationBar(
                     color = if (selected) VioletLight else MutedText,
                     fontSize = 21.sp
                 )
+
                 Spacer(Modifier.height(2.dp))
+
                 Text(
                     tab.label,
                     color = if (selected) VioletLight else MutedText,
                     fontSize = 9.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (selected) {
+                        FontWeight.Bold
+                    } else {
+                        FontWeight.Normal
+                    },
                     maxLines = 1
                 )
             }
@@ -1352,5 +1547,6 @@ private fun formatTime(milliseconds: Long): String {
     val totalSeconds = (milliseconds / 1000L).coerceAtLeast(0L)
     val minutes = totalSeconds / 60L
     val seconds = totalSeconds % 60L
+
     return "%d:%02d".format(minutes, seconds)
 }
