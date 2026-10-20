@@ -1,8 +1,12 @@
 package com.violetmusic.app
 
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +37,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,6 +97,11 @@ private data class DemoSong(
     val duration: String
 )
 
+private data class ImportedSong(
+    val title: String,
+    val uri: Uri
+)
+
 private val demoSongs = listOf(
     DemoSong("Midnight Dreams", "Luna Rivers", 0, "3:42"),
     DemoSong("Purple Skies", "Nova Echo", 1, "3:18"),
@@ -101,6 +112,45 @@ private val demoSongs = listOf(
 @Composable
 private fun VioletMusicApp() {
     var selectedTab by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+
+    val importedSongs = remember {
+        mutableStateListOf<ImportedSong>()
+    }
+
+    val audioPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        uris.forEach { uri ->
+            val title = context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val nameIndex =
+                    cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+
+                if (cursor.moveToFirst() && nameIndex >= 0) {
+                    cursor.getString(nameIndex)
+                } else {
+                    null
+                }
+            } ?: uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?: "Archivo de audio"
+
+            if (importedSongs.none { it.uri == uri }) {
+                importedSongs.add(
+                    ImportedSong(
+                        title = title,
+                        uri = uri
+                    )
+                )
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -143,12 +193,38 @@ private fun VioletMusicApp() {
                 Spacer(Modifier.height(29.dp))
 
                 SectionHeading(
-                    title = "Escucha a tu manera",
-                    subtitle = "Tu biblioteca aparecerá aquí"
+                    title = "Tu biblioteca musical",
+                    subtitle = if (importedSongs.isEmpty()) {
+                        "Importa canciones de tu teléfono"
+                    } else {
+                        "${importedSongs.size} archivo(s) importado(s)"
+                    }
                 )
 
                 Spacer(Modifier.height(13.dp))
-                EmptyLibraryCard()
+
+                EmptyLibraryCard(
+                    hasSongs = importedSongs.isNotEmpty(),
+                    onImportClick = {
+                        audioPicker.launch(arrayOf("audio/*"))
+                    }
+                )
+
+                if (importedSongs.isNotEmpty()) {
+                    Spacer(Modifier.height(15.dp))
+
+                    importedSongs.forEachIndexed { index, song ->
+                        ImportedSongRow(
+                            title = song.title,
+                            index = index
+                        )
+
+                        if (index != importedSongs.lastIndex) {
+                            Spacer(Modifier.height(8.dp))
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(28.dp))
 
                 SectionHeading(
@@ -497,7 +573,10 @@ private fun CategoryCard(
 }
 
 @Composable
-private fun EmptyLibraryCard() {
+private fun EmptyLibraryCard(
+    hasSongs: Boolean,
+    onImportClick: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -524,7 +603,11 @@ private fun EmptyLibraryCard() {
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "Un espacio para tu música",
+            text = if (hasSongs) {
+                "Tus canciones están listas"
+            } else {
+                "Un espacio para tu música"
+            },
             color = MainText,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold
@@ -533,11 +616,44 @@ private fun EmptyLibraryCard() {
         Spacer(Modifier.height(6.dp))
 
         Text(
-            text = "Aquí aparecerán tus canciones cuando\nla biblioteca musical esté disponible.",
+            text = if (hasSongs) {
+                "Puedes añadir más archivos cuando quieras."
+            } else {
+                "Selecciona canciones de tu teléfono\ny aparecerán aquí."
+            },
             color = MutedText,
             fontSize = 12.sp,
             lineHeight = 18.sp
         )
+
+        Spacer(Modifier.height(18.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Violet)
+                .clickable(onClick = onImportClick)
+                .padding(horizontal = 16.dp, vertical = 13.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "+",
+                color = Background,
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(Modifier.width(8.dp))
+
+            Text(
+                text = "Importar canciones",
+                color = Background,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -638,6 +754,53 @@ private fun SongRow(song: DemoSong) {
 }
 
 @Composable
+private fun ImportedSongRow(
+    title: String,
+    index: Int
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(17.dp))
+            .background(Panel)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AlbumCover(
+            index = index,
+            modifier = Modifier.size(51.dp)
+        )
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = MainText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                text = "Archivo de tu dispositivo",
+                color = MutedText,
+                fontSize = 11.sp
+            )
+        }
+
+        Text(
+            text = "♫",
+            color = VioletLight,
+            fontSize = 21.sp
+        )
+    }
+}
+
+@Composable
 private fun MiniPlayer() {
     Row(
         modifier = Modifier
@@ -721,7 +884,9 @@ private fun BottomNavigation(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(13.dp))
-                    .clickable { onTabSelected(tab.third) }
+                    .clickable {
+                        onTabSelected(tab.third)
+                    }
                     .padding(vertical = 5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
