@@ -1,4 +1,3 @@
-
 package com.violetmusic.app
 
 import android.content.Context
@@ -500,14 +499,14 @@ private fun MusicApp() {
                             } else if (player.hasPreviousMediaItem()) {
                                 player.seekToPreviousMediaItem()
                             } else if (player.mediaItemCount > 0) {
-                                player.seekTo(player.mediaItemCount - 1)
+                                player.seekTo(player.mediaItemCount - 1, 0L)
                             }
                         },
                         onNext = {
                             if (player.hasNextMediaItem()) {
                                 player.seekToNextMediaItem()
                             } else if (player.mediaItemCount > 0) {
-                                player.seekTo(0)
+                                player.seekTo(0, 0L)
                             }
                         },
                         onRepeat = {
@@ -577,7 +576,7 @@ private fun MusicApp() {
                         if (player.hasNextMediaItem()) {
                             player.seekToNextMediaItem()
                         } else if (player.mediaItemCount > 0) {
-                            player.seekTo(0)
+                            player.seekTo(0, 0L)
                         }
                     }
                 )
