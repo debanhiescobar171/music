@@ -57,6 +57,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 private val Background = Color(0xFF0B0910)
 private val Panel = Color(0xFF17131F)
@@ -76,6 +77,14 @@ private data class SongArtwork(
     val metadataTitle: String? = null,
     val artist: String? = null
 )
+
+/*
+ * Caché compartida de portadas.
+ *
+ * Evita volver a decodificar la imagen cada vez que una canción
+ * aparece en la biblioteca, el minirreproductor o el reproductor.
+ */
+private val artworkCache = ConcurrentHashMap<String, SongArtwork>()
 
 private data class MusicPlaylist(
     val id: String,
@@ -114,11 +123,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun loadPlaylists(preferences: android.content.SharedPreferences): List<MusicPlaylist> {
+private fun loadPlaylists(
+    preferences: android.content.SharedPreferences
+): List<MusicPlaylist> {
     val result = mutableListOf<MusicPlaylist>()
 
     try {
-        val json = JSONArray(preferences.getString("playlists_json", "[]") ?: "[]")
+        val json = JSONArray(
+            preferences.getString("playlists_json", "[]") ?: "[]"
+        )
 
         for (i in 0 until json.length()) {
             val item = json.optJSONObject(i) ?: continue
@@ -137,7 +150,7 @@ private fun loadPlaylists(preferences: android.content.SharedPreferences): List<
             }
         }
     } catch (_: Exception) {
-        // Si los datos guardados no se pueden leer, se inicia con listas vacías.
+        // Si los datos no se pueden leer, se inicia con listas vacías.
     }
 
     return result
@@ -161,7 +174,9 @@ private fun savePlaylists(
         json.put(item)
     }
 
-    preferences.edit().putString("playlists_json", json.toString()).apply()
+    preferences.edit()
+        .putString("playlists_json", json.toString())
+        .apply()
 }
 
 @Composable
@@ -169,7 +184,10 @@ private fun MusicApp() {
     val context = LocalContext.current
 
     val preferences = remember {
-        context.getSharedPreferences("music_library", Context.MODE_PRIVATE)
+        context.getSharedPreferences(
+            "music_library",
+            Context.MODE_PRIVATE
+        )
     }
 
     val songs = remember {
@@ -226,10 +244,12 @@ private fun MusicApp() {
     fun saveLibrary() {
         preferences.edit().apply {
             putInt("count", songs.size)
+
             songs.forEachIndexed { index, song ->
                 putString("uri_$index", song.uri.toString())
                 putString("title_$index", song.title)
             }
+
             apply()
         }
     }
@@ -314,11 +334,14 @@ private fun MusicApp() {
                 songUris = emptyList()
             )
         )
+
         saveCurrentPlaylists()
     }
 
     fun playPlaylistSong(playlistId: String, uriText: String) {
-        val playlist = playlists.firstOrNull { it.id == playlistId } ?: return
+        val playlist = playlists.firstOrNull {
+            it.id == playlistId
+        } ?: return
 
         val queue = playlist.songUris.mapNotNull { uri ->
             songs.firstOrNull { it.uri.toString() == uri }
@@ -328,7 +351,9 @@ private fun MusicApp() {
             it.uri.toString() == uriText
         }
 
-        if (startIndex >= 0) playQueue(queue, startIndex)
+        if (startIndex >= 0) {
+            playQueue(queue, startIndex)
+        }
     }
 
     DisposableEffect(player) {
@@ -384,6 +409,7 @@ private fun MusicApp() {
                 playbackPosition = player.currentPosition.coerceAtLeast(0L)
                 playbackDuration = player.duration.coerceAtLeast(0L)
             }
+
             delay(400)
         }
     }
@@ -391,7 +417,9 @@ private fun MusicApp() {
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        if (uris.isEmpty()) {
+            return@rememberLauncherForActivityResult
+        }
 
         var addedCount = 0
         var firstNewIndex = -1
@@ -414,7 +442,10 @@ private fun MusicApp() {
                     null,
                     null
                 )?.use { cursor ->
-                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val column = cursor.getColumnIndex(
+                        OpenableColumns.DISPLAY_NAME
+                    )
+
                     if (cursor.moveToFirst() && column >= 0) {
                         cursor.getString(column)
                     } else {
@@ -423,10 +454,15 @@ private fun MusicApp() {
                 }
             } catch (_: Exception) {
                 null
-            } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Canción"
+            } ?: uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?: "Canción"
 
             if (songs.none { it.uri == uri }) {
-                if (firstNewIndex < 0) firstNewIndex = songs.size
+                if (firstNewIndex < 0) {
+                    firstNewIndex = songs.size
+                }
+
                 songs.add(ImportedSong(title, uri))
                 addedCount++
             }
@@ -478,20 +514,28 @@ private fun MusicApp() {
                         statusMessage = statusMessage,
                         playbackSpeed = playbackSpeed,
                         speedMenuExpanded = speedMenuExpanded,
-                        onSpeedMenuChange = { speedMenuExpanded = it },
+                        onSpeedMenuChange = {
+                            speedMenuExpanded = it
+                        },
                         onSpeedChange = {
                             playbackSpeed = it
                             player.playbackParameters = PlaybackParameters(it)
                         },
                         onSeek = { fraction ->
                             if (playbackDuration > 0L) {
-                                val position = (fraction * playbackDuration).toLong()
+                                val position =
+                                    (fraction * playbackDuration).toLong()
+
                                 player.seekTo(position)
                                 playbackPosition = position
                             }
                         },
                         onPlayPause = {
-                            if (player.isPlaying) player.pause() else player.play()
+                            if (player.isPlaying) {
+                                player.pause()
+                            } else {
+                                player.play()
+                            }
                         },
                         onPrevious = {
                             if (player.currentPosition > 3000L) {
@@ -499,7 +543,10 @@ private fun MusicApp() {
                             } else if (player.hasPreviousMediaItem()) {
                                 player.seekToPreviousMediaItem()
                             } else if (player.mediaItemCount > 0) {
-                                player.seekTo(player.mediaItemCount - 1, 0L)
+                                player.seekTo(
+                                    player.mediaItemCount - 1,
+                                    0L
+                                )
                             }
                         },
                         onNext = {
@@ -511,17 +558,28 @@ private fun MusicApp() {
                         },
                         onRepeat = {
                             player.repeatMode = when (player.repeatMode) {
-                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                Player.REPEAT_MODE_ONE -> Player.REPEAT_MODE_OFF
+                                Player.REPEAT_MODE_ALL ->
+                                    Player.REPEAT_MODE_ONE
+
+                                Player.REPEAT_MODE_ONE ->
+                                    Player.REPEAT_MODE_OFF
+
                                 else -> Player.REPEAT_MODE_ALL
                             }
                         },
                         onShuffle = {
-                            player.shuffleModeEnabled = !player.shuffleModeEnabled
+                            player.shuffleModeEnabled =
+                                !player.shuffleModeEnabled
                         },
-                        onMinimize = { showFullPlayer = false },
-                        isFavorite = favorites.contains(currentSong.uri.toString()),
-                        onFavorite = { toggleFavorite(currentSong) }
+                        onMinimize = {
+                            showFullPlayer = false
+                        },
+                        isFavorite = favorites.contains(
+                            currentSong.uri.toString()
+                        ),
+                        onFavorite = {
+                            toggleFavorite(currentSong)
+                        }
                     )
                 } else {
                     MainContent(
@@ -532,24 +590,38 @@ private fun MusicApp() {
                         currentSongUri = currentSong?.uri?.toString(),
                         isPlaying = isPlaying,
                         statusMessage = statusMessage,
-                        onImport = { audioPicker.launch(arrayOf("audio/*")) },
-                        onPlaySong = { playSong(it) },
-                        onFavorite = { toggleFavorite(it) },
-                        onCreatePlaylist = { createPlaylist(it) },
+                        onImport = {
+                            audioPicker.launch(arrayOf("audio/*"))
+                        },
+                        onPlaySong = {
+                            playSong(it)
+                        },
+                        onFavorite = {
+                            toggleFavorite(it)
+                        },
+                        onCreatePlaylist = {
+                            createPlaylist(it)
+                        },
                         onDeletePlaylist = { playlist ->
-                            playlists.removeAll { it.id == playlist.id }
+                            playlists.removeAll {
+                                it.id == playlist.id
+                            }
                             saveCurrentPlaylists()
                         },
                         onAddSongsToPlaylist = { playlistId, urisToAdd ->
                             updatePlaylist(playlistId) { playlist ->
-                                val combined = (playlist.songUris + urisToAdd).distinct()
+                                val combined =
+                                    (playlist.songUris + urisToAdd).distinct()
+
                                 playlist.copy(songUris = combined)
                             }
                         },
                         onRemoveSongFromPlaylist = { playlistId, uri ->
                             updatePlaylist(playlistId) { playlist ->
                                 playlist.copy(
-                                    songUris = playlist.songUris.filterNot { it == uri }
+                                    songUris = playlist.songUris.filterNot {
+                                        it == uri
+                                    }
                                 )
                             }
                         },
@@ -568,9 +640,15 @@ private fun MusicApp() {
                     position = playbackPosition,
                     duration = playbackDuration,
                     progress = progress,
-                    onOpen = { showFullPlayer = true },
+                    onOpen = {
+                        showFullPlayer = true
+                    },
                     onPlayPause = {
-                        if (player.isPlaying) player.pause() else player.play()
+                        if (player.isPlaying) {
+                            player.pause()
+                        } else {
+                            player.play()
+                        }
                     },
                     onNext = {
                         if (player.hasNextMediaItem()) {
@@ -615,7 +693,7 @@ private fun MainContent(
     var newPlaylistName by remember { mutableStateOf("") }
     var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
     var showAddSongsDialog by remember { mutableStateOf(false) }
-    var pendingSongUris = remember { mutableStateListOf<String>() }
+    val pendingSongUris = remember { mutableStateListOf<String>() }
     var deleteCandidate by remember { mutableStateOf<MusicPlaylist?>(null) }
 
     LaunchedEffect(selectedTab) {
@@ -630,16 +708,26 @@ private fun MainContent(
 
     if (showCreateDialog) {
         AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
+            onDismissRequest = {
+                showCreateDialog = false
+            },
             containerColor = Panel,
             title = {
-                Text("Crear playlist", color = MainText, fontWeight = FontWeight.Bold)
+                Text(
+                    "Crear playlist",
+                    color = MainText,
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
                 OutlinedTextField(
                     value = newPlaylistName,
-                    onValueChange = { newPlaylistName = it },
-                    label = { Text("Nombre de la playlist") },
+                    onValueChange = {
+                        newPlaylistName = it
+                    },
+                    label = {
+                        Text("Nombre de la playlist")
+                    },
                     singleLine = true
                 )
             },
@@ -657,7 +745,11 @@ private fun MainContent(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateDialog = false }) {
+                TextButton(
+                    onClick = {
+                        showCreateDialog = false
+                    }
+                ) {
                     Text("Cancelar", color = MutedText)
                 }
             }
@@ -666,30 +758,46 @@ private fun MainContent(
 
     if (showAddSongsDialog && selectedPlaylist != null) {
         AlertDialog(
-            onDismissRequest = { showAddSongsDialog = false },
+            onDismissRequest = {
+                showAddSongsDialog = false
+            },
             containerColor = Panel,
             title = {
-                Text("Agregar canciones", color = MainText, fontWeight = FontWeight.Bold)
+                Text(
+                    "Agregar canciones",
+                    color = MainText,
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
                 if (songs.isEmpty()) {
-                    Text("Primero importa canciones a tu biblioteca.", color = MutedText)
+                    Text(
+                        "Primero importa canciones a tu biblioteca.",
+                        color = MutedText
+                    )
                 } else {
                     LazyColumn(
                         modifier = Modifier.heightIn(max = 380.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        items(songs, key = { it.uri.toString() }) { song ->
+                        items(
+                            songs,
+                            key = { it.uri.toString() }
+                        ) { song ->
                             val uri = song.uri.toString()
-                            val alreadyAdded = selectedPlaylist.songUris.contains(uri)
+                            val alreadyAdded =
+                                selectedPlaylist.songUris.contains(uri)
                             val checked = pendingSongUris.contains(uri)
 
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable(enabled = !alreadyAdded) {
-                                        if (checked) pendingSongUris.remove(uri)
-                                        else pendingSongUris.add(uri)
+                                        if (checked) {
+                                            pendingSongUris.remove(uri)
+                                        } else {
+                                            pendingSongUris.add(uri)
+                                        }
                                     }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -707,14 +815,22 @@ private fun MainContent(
                                         }
                                     }
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
+
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
                                     Text(
                                         song.title,
-                                        color = if (alreadyAdded) MutedText else MainText,
+                                        color = if (alreadyAdded) {
+                                            MutedText
+                                        } else {
+                                            MainText
+                                        },
                                         fontSize = 13.sp,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
+
                                     if (alreadyAdded) {
                                         Text(
                                             "Ya está en esta playlist",
@@ -757,7 +873,9 @@ private fun MainContent(
 
     if (deleteCandidate != null) {
         AlertDialog(
-            onDismissRequest = { deleteCandidate = null },
+            onDismissRequest = {
+                deleteCandidate = null
+            },
             containerColor = Panel,
             title = {
                 Text("Eliminar playlist", color = MainText)
@@ -772,9 +890,11 @@ private fun MainContent(
                 TextButton(
                     onClick = {
                         deleteCandidate?.let(onDeletePlaylist)
+
                         if (selectedPlaylistId == deleteCandidate?.id) {
                             selectedPlaylistId = null
                         }
+
                         deleteCandidate = null
                     }
                 ) {
@@ -782,7 +902,11 @@ private fun MainContent(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { deleteCandidate = null }) {
+                TextButton(
+                    onClick = {
+                        deleteCandidate = null
+                    }
+                ) {
                     Text("Cancelar", color = MutedText)
                 }
             }
@@ -791,7 +915,10 @@ private fun MainContent(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(
+            horizontal = 18.dp,
+            vertical = 16.dp
+        ),
         verticalArrangement = Arrangement.spacedBy(15.dp)
     ) {
         item {
@@ -805,12 +932,21 @@ private fun MainContent(
                         .clip(RoundedCornerShape(14.dp))
                         .background(
                             Brush.linearGradient(
-                                listOf(Color(0xFFC69AFF), Color(0xFF7540D8), Color(0xFF3A1C68))
+                                listOf(
+                                    Color(0xFFC69AFF),
+                                    Color(0xFF7540D8),
+                                    Color(0xFF3A1C68)
+                                )
                             )
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("M", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        "M",
+                        color = Color.White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black
+                    )
                 }
 
                 Spacer(Modifier.width(12.dp))
@@ -842,10 +978,18 @@ private fun MainContent(
                             .clip(RoundedCornerShape(24.dp))
                             .background(
                                 Brush.linearGradient(
-                                    listOf(Color(0xFF392052), Color(0xFF21142F), Panel)
+                                    listOf(
+                                        Color(0xFF392052),
+                                        Color(0xFF21142F),
+                                        Panel
+                                    )
                                 )
                             )
-                            .border(1.dp, Color(0xFF51336C), RoundedCornerShape(24.dp))
+                            .border(
+                                1.dp,
+                                Color(0xFF51336C),
+                                RoundedCornerShape(24.dp)
+                            )
                             .padding(21.dp)
                     ) {
                         Text(
@@ -855,7 +999,9 @@ private fun MainContent(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
                         )
+
                         Spacer(Modifier.height(12.dp))
+
                         Text(
                             "Siente cada\nnota.",
                             color = MainText,
@@ -863,14 +1009,22 @@ private fun MainContent(
                             lineHeight = 39.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
+
                         Spacer(Modifier.height(8.dp))
+
                         Text(
                             "Tu música. Tu ritmo. Tu espacio.",
                             color = Color(0xFFD1C2DE),
                             fontSize = 13.sp
                         )
+
                         Spacer(Modifier.height(12.dp))
-                        Text(statusMessage, color = VioletLight, fontSize = 12.sp)
+
+                        Text(
+                            statusMessage,
+                            color = VioletLight,
+                            fontSize = 12.sp
+                        )
                     }
                 }
 
@@ -893,14 +1047,24 @@ private fun MainContent(
                         )
                     }
                 } else {
-                    itemsIndexed(songs, key = { _, song -> song.uri.toString() }) { index, song ->
+                    itemsIndexed(
+                        songs,
+                        key = { _, song -> song.uri.toString() }
+                    ) { index, song ->
                         SongRow(
                             song = song,
                             isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri && isPlaying,
-                            isFavorite = favorites.contains(song.uri.toString()),
-                            onClick = { onPlaySong(index) },
-                            onFavorite = { onFavorite(song) }
+                            isPlaying = song.uri.toString() == currentSongUri &&
+                                isPlaying,
+                            isFavorite = favorites.contains(
+                                song.uri.toString()
+                            ),
+                            onClick = {
+                                onPlaySong(index)
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -926,14 +1090,24 @@ private fun MainContent(
                         )
                     }
                 } else {
-                    itemsIndexed(songs, key = { _, song -> song.uri.toString() }) { index, song ->
+                    itemsIndexed(
+                        songs,
+                        key = { _, song -> song.uri.toString() }
+                    ) { index, song ->
                         SongRow(
                             song = song,
                             isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri && isPlaying,
-                            isFavorite = favorites.contains(song.uri.toString()),
-                            onClick = { onPlaySong(index) },
-                            onFavorite = { onFavorite(song) }
+                            isPlaying = song.uri.toString() == currentSongUri &&
+                                isPlaying,
+                            isFavorite = favorites.contains(
+                                song.uri.toString()
+                            ),
+                            onClick = {
+                                onPlaySong(index)
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -963,16 +1137,28 @@ private fun MainContent(
                         )
                     }
                 } else {
-                    items(favoriteSongs, key = { it.uri.toString() }) { song ->
-                        val originalIndex = songs.indexOfFirst { it.uri == song.uri }
+                    items(
+                        favoriteSongs,
+                        key = { it.uri.toString() }
+                    ) { song ->
+                        val originalIndex = songs.indexOfFirst {
+                            it.uri == song.uri
+                        }
 
                         SongRow(
                             song = song,
                             isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri && isPlaying,
+                            isPlaying = song.uri.toString() == currentSongUri &&
+                                isPlaying,
                             isFavorite = true,
-                            onClick = { if (originalIndex >= 0) onPlaySong(originalIndex) },
-                            onFavorite = { onFavorite(song) }
+                            onClick = {
+                                if (originalIndex >= 0) {
+                                    onPlaySong(originalIndex)
+                                }
+                            },
+                            onFavorite = {
+                                onFavorite(song)
+                            }
                         )
                     }
                 }
@@ -985,7 +1171,9 @@ private fun MainContent(
                             title = "Tus playlists",
                             subtitle = "${playlists.size} lista(s) creada(s)",
                             action = "+ Crear",
-                            onAction = { showCreateDialog = true }
+                            onAction = {
+                                showCreateDialog = true
+                            }
                         )
                     }
 
@@ -995,18 +1183,29 @@ private fun MainContent(
                                 title = "Crea tu primera playlist",
                                 message = "Organiza tus canciones favoritas en listas personalizadas.",
                                 action = "CREAR PLAYLIST",
-                                onAction = { showCreateDialog = true }
+                                onAction = {
+                                    showCreateDialog = true
+                                }
                             )
                         }
                     } else {
-                        items(playlists, key = { it.id }) { playlist ->
+                        items(
+                            playlists,
+                            key = { it.id }
+                        ) { playlist ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(18.dp))
                                     .background(Panel)
-                                    .border(1.dp, PanelLight, RoundedCornerShape(18.dp))
-                                    .clickable { selectedPlaylistId = playlist.id }
+                                    .border(
+                                        1.dp,
+                                        PanelLight,
+                                        RoundedCornerShape(18.dp)
+                                    )
+                                    .clickable {
+                                        selectedPlaylistId = playlist.id
+                                    }
                                     .padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1016,17 +1215,26 @@ private fun MainContent(
                                         .clip(RoundedCornerShape(14.dp))
                                         .background(
                                             Brush.linearGradient(
-                                                listOf(Color(0xFFB28AFF), Color(0xFF392064))
+                                                listOf(
+                                                    Color(0xFFB28AFF),
+                                                    Color(0xFF392064)
+                                                )
                                             )
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text("♫", color = Color.White, fontSize = 28.sp)
+                                    Text(
+                                        "♫",
+                                        color = Color.White,
+                                        fontSize = 28.sp
+                                    )
                                 }
 
                                 Spacer(Modifier.width(12.dp))
 
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
                                     Text(
                                         playlist.name,
                                         color = MainText,
@@ -1035,6 +1243,7 @@ private fun MainContent(
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
+
                                     Text(
                                         "${playlist.songUris.size} canción(es)",
                                         color = MutedText,
@@ -1046,7 +1255,9 @@ private fun MainContent(
                                     "›",
                                     color = VioletLight,
                                     fontSize = 28.sp,
-                                    modifier = Modifier.padding(horizontal = 5.dp)
+                                    modifier = Modifier.padding(
+                                        horizontal = 5.dp
+                                    )
                                 )
 
                                 Text(
@@ -1054,7 +1265,9 @@ private fun MainContent(
                                     color = MutedText,
                                     fontSize = 22.sp,
                                     modifier = Modifier
-                                        .clickable { deleteCandidate = playlist }
+                                        .clickable {
+                                            deleteCandidate = playlist
+                                        }
                                         .padding(8.dp)
                                 )
                             }
@@ -1062,11 +1275,15 @@ private fun MainContent(
                     }
                 } else {
                     item {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             Text(
                                 "‹ Volver a playlists",
                                 modifier = Modifier
-                                    .clickable { selectedPlaylistId = null }
+                                    .clickable {
+                                        selectedPlaylistId = null
+                                    }
                                     .padding(vertical = 5.dp),
                                 color = VioletLight,
                                 fontSize = 13.sp
@@ -1085,7 +1302,9 @@ private fun MainContent(
                                 fontSize = 12.sp
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 ActionChip(
                                     text = "+ Agregar canciones",
                                     onClick = {
@@ -1093,17 +1312,23 @@ private fun MainContent(
                                         showAddSongsDialog = true
                                     }
                                 )
+
                                 ActionChip(
                                     text = "Eliminar lista",
-                                    onClick = { deleteCandidate = selectedPlaylist }
+                                    onClick = {
+                                        deleteCandidate = selectedPlaylist
+                                    }
                                 )
                             }
                         }
                     }
 
-                    val playlistSongs = selectedPlaylist.songUris.mapNotNull { uri ->
-                        songs.firstOrNull { it.uri.toString() == uri }
-                    }
+                    val playlistSongs =
+                        selectedPlaylist.songUris.mapNotNull { uri ->
+                            songs.firstOrNull {
+                                it.uri.toString() == uri
+                            }
+                        }
 
                     if (playlistSongs.isEmpty()) {
                         item {
@@ -1118,17 +1343,27 @@ private fun MainContent(
                             )
                         }
                     } else {
-                        items(playlistSongs, key = { it.uri.toString() }) { song ->
+                        items(
+                            playlistSongs,
+                            key = { it.uri.toString() }
+                        ) { song ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(17.dp))
                                     .background(Panel)
-                                    .border(1.dp, PanelLight, RoundedCornerShape(17.dp))
+                                    .border(
+                                        1.dp,
+                                        PanelLight,
+                                        RoundedCornerShape(17.dp)
+                                    )
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                SongArtwork(song, Modifier.size(48.dp))
+                                SongArtwork(
+                                    song,
+                                    Modifier.size(48.dp)
+                                )
 
                                 Spacer(Modifier.width(10.dp))
 
@@ -1150,6 +1385,7 @@ private fun MainContent(
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
+
                                     Text(
                                         "Toca para reproducir",
                                         color = MutedText,
@@ -1203,7 +1439,10 @@ private fun ActionChip(
             .clip(RoundedCornerShape(12.dp))
             .background(Violet)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(
+                horizontal = 12.dp,
+                vertical = 10.dp
+            ),
         color = Background,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold
@@ -1222,8 +1461,18 @@ private fun SectionHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = MainText, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = MutedText, fontSize = 12.sp)
+            Text(
+                title,
+                color = MainText,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                subtitle,
+                color = MutedText,
+                fontSize = 12.sp
+            )
         }
 
         if (action != null) {
@@ -1233,7 +1482,10 @@ private fun SectionHeader(
                     .clip(RoundedCornerShape(12.dp))
                     .background(Violet)
                     .clickable(onClick = onAction)
-                    .padding(horizontal = 13.dp, vertical = 10.dp),
+                    .padding(
+                        horizontal = 13.dp,
+                        vertical = 10.dp
+                    ),
                 color = Background,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
@@ -1254,25 +1506,50 @@ private fun EmptyPanel(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(Panel)
-            .border(1.dp, PanelLight, RoundedCornerShape(20.dp))
+            .border(
+                1.dp,
+                PanelLight,
+                RoundedCornerShape(20.dp)
+            )
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("♫", color = VioletLight, fontSize = 40.sp)
+        Text(
+            "♫",
+            color = VioletLight,
+            fontSize = 40.sp
+        )
+
         Spacer(Modifier.height(10.dp))
-        Text(title, color = MainText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+
+        Text(
+            title,
+            color = MainText,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp
+        )
+
         Spacer(Modifier.height(6.dp))
-        Text(message, color = MutedText, fontSize = 12.sp)
+
+        Text(
+            message,
+            color = MutedText,
+            fontSize = 12.sp
+        )
 
         if (action != null) {
             Spacer(Modifier.height(16.dp))
+
             Text(
                 action,
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(Violet)
                     .clickable(onClick = onAction)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                    .padding(
+                        horizontal = 18.dp,
+                        vertical = 12.dp
+                    ),
                 color = Background,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp
@@ -1294,17 +1571,27 @@ private fun SongRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(17.dp))
-            .background(if (isCurrent) Color(0xFF2A1D39) else Panel)
+            .background(
+                if (isCurrent) Color(0xFF2A1D39) else Panel
+            )
             .border(
                 1.dp,
-                if (isCurrent) Violet.copy(alpha = 0.6f) else PanelLight,
+                if (isCurrent) {
+                    Violet.copy(alpha = 0.6f)
+                } else {
+                    PanelLight
+                },
                 RoundedCornerShape(17.dp)
             )
             .clickable(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        SongArtwork(song, Modifier.size(49.dp))
+        SongArtwork(
+            song,
+            Modifier.size(49.dp)
+        )
+
         Spacer(Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
@@ -1316,9 +1603,15 @@ private fun SongRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+
             Spacer(Modifier.height(4.dp))
+
             Text(
-                if (isCurrent && isPlaying) "Reproduciendo ahora" else "Archivo de tu dispositivo",
+                if (isCurrent && isPlaying) {
+                    "Reproduciendo ahora"
+                } else {
+                    "Archivo de tu dispositivo"
+                },
                 color = if (isCurrent) VioletLight else MutedText,
                 fontSize = 11.sp
             )
@@ -1328,12 +1621,19 @@ private fun SongRow(
             if (isFavorite) "♥" else "♡",
             modifier = Modifier
                 .clickable(onClick = onFavorite)
-                .padding(horizontal = 9.dp, vertical = 8.dp),
+                .padding(
+                    horizontal = 9.dp,
+                    vertical = 8.dp
+                ),
             color = if (isFavorite) VioletLight else MutedText,
             fontSize = 22.sp
         )
 
-        Text(if (isCurrent && isPlaying) "Ⅱ" else "▶", color = VioletLight, fontSize = 18.sp)
+        Text(
+            if (isCurrent && isPlaying) "Ⅱ" else "▶",
+            color = VioletLight,
+            fontSize = 18.sp
+        )
     }
 }
 
@@ -1345,11 +1645,11 @@ private fun SongArtwork(
     val context = LocalContext.current
 
     val artwork by produceState(
-        initialValue = SongArtwork(),
+        initialValue = artworkCache[song.uri.toString()] ?: SongArtwork(),
         key1 = song.uri
     ) {
         value = withContext(Dispatchers.IO) {
-            readSongArtwork(context, song.uri)
+            readCachedSongArtwork(context, song.uri)
         }
     }
 
@@ -1357,7 +1657,12 @@ private fun SongArtwork(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .background(
-                Brush.linearGradient(listOf(Color(0xFFB28AFF), Color(0xFF392064)))
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFFB28AFF),
+                        Color(0xFF392064)
+                    )
+                )
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -1371,12 +1676,46 @@ private fun SongArtwork(
                 contentScale = ContentScale.Crop
             )
         } else {
-            Text("♫", color = Color.White, fontSize = 27.sp)
+            Text(
+                "♫",
+                color = Color.White,
+                fontSize = 27.sp
+            )
         }
     }
 }
 
-private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
+/*
+ * Busca primero la portada en la caché.
+ * Si todavía no se ha leído, extrae los metadatos del archivo de audio.
+ */
+private fun readCachedSongArtwork(
+    context: Context,
+    uri: Uri
+): SongArtwork {
+    val key = uri.toString()
+
+    artworkCache[key]?.let { cached ->
+        return cached
+    }
+
+    val result = readSongArtwork(context, uri)
+
+    val previous = artworkCache.putIfAbsent(key, result)
+    return previous ?: result
+}
+
+/*
+ * Extrae los metadatos y la imagen incrustada en el audio.
+ *
+ * MediaMetadataRetriever.embeddedPicture entrega los bytes de la portada.
+ * BitmapFactory identifica el formato de esos bytes, por lo que puede
+ * decodificar PNG y JPEG sin depender de la extensión de la canción.
+ */
+private fun readSongArtwork(
+    context: Context,
+    uri: Uri
+): SongArtwork {
     val retriever = MediaMetadataRetriever()
 
     return try {
@@ -1385,25 +1724,48 @@ private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
         val title = retriever.extractMetadata(
             MediaMetadataRetriever.METADATA_KEY_TITLE
         )
+
         val artist = retriever.extractMetadata(
             MediaMetadataRetriever.METADATA_KEY_ARTIST
         )
 
         val bytes = retriever.embeddedPicture
+
         val bitmap = if (bytes != null && bytes.isNotEmpty()) {
             try {
                 val bounds = BitmapFactory.Options().apply {
                     inJustDecodeBounds = true
                 }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
 
-                val sample = calculateSampleSize(bounds.outWidth, bounds.outHeight, 1200, 1200)
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = sample
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    bounds
+                )
+
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    val sample = calculateSampleSize(
+                        bounds.outWidth,
+                        bounds.outHeight,
+                        1200,
+                        1200
+                    )
+
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+
+                    BitmapFactory.decodeByteArray(
+                        bytes,
+                        0,
+                        bytes.size,
+                        options
+                    )
+                } else {
+                    null
                 }
-
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             } catch (_: Exception) {
                 null
             }
@@ -1411,7 +1773,11 @@ private fun readSongArtwork(context: Context, uri: Uri): SongArtwork {
             null
         }
 
-        SongArtwork(bitmap, title, artist)
+        SongArtwork(
+            bitmap = bitmap,
+            metadataTitle = title,
+            artist = artist
+        )
     } catch (_: Exception) {
         SongArtwork()
     } finally {
@@ -1432,7 +1798,9 @@ private fun calculateSampleSize(
     if (width <= 0 || height <= 0) return 1
 
     var sample = 1
-    while (width / (sample * 2) >= maxWidth &&
+
+    while (
+        width / (sample * 2) >= maxWidth &&
         height / (sample * 2) >= maxHeight
     ) {
         sample *= 2
@@ -1456,15 +1824,29 @@ private fun MiniPlayer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(
+                horizontal = 10.dp,
+                vertical = 6.dp
+            )
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFF251A33))
-            .border(1.dp, Color(0xFF4A315D), RoundedCornerShape(18.dp))
+            .border(
+                1.dp,
+                Color(0xFF4A315D),
+                RoundedCornerShape(18.dp)
+            )
             .clickable(onClick = onOpen)
-            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .padding(
+                horizontal = 12.dp,
+                vertical = 9.dp
+            )
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SongArtwork(song, Modifier.size(42.dp))
+            SongArtwork(
+                song,
+                Modifier.size(42.dp)
+            )
+
             Spacer(Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
@@ -1476,7 +1858,13 @@ private fun MiniPlayer(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(statusMessage, color = MutedText, fontSize = 10.sp, maxLines = 1)
+
+                Text(
+                    statusMessage,
+                    color = MutedText,
+                    fontSize = 10.sp,
+                    maxLines = 1
+                )
             }
 
             Text(
@@ -1484,7 +1872,10 @@ private fun MiniPlayer(
                 modifier = Modifier
                     .clip(CircleShape)
                     .clickable(onClick = onPlayPause)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 8.dp
+                    ),
                 color = VioletLight,
                 fontSize = 20.sp
             )
@@ -1493,7 +1884,10 @@ private fun MiniPlayer(
                 "»",
                 modifier = Modifier
                     .clickable(onClick = onNext)
-                    .padding(horizontal = 5.dp, vertical = 8.dp),
+                    .padding(
+                        horizontal = 5.dp,
+                        vertical = 8.dp
+                    ),
                 color = VioletLight,
                 fontSize = 25.sp
             )
@@ -1503,7 +1897,9 @@ private fun MiniPlayer(
             value = progress,
             onValueChange = {},
             enabled = false,
-            modifier = Modifier.fillMaxWidth().height(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp),
             colors = androidx.compose.material3.SliderDefaults.colors(
                 disabledThumbColor = VioletLight,
                 disabledActiveTrackColor = Violet,
@@ -1515,8 +1911,17 @@ private fun MiniPlayer(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(formatTime(position), color = MutedText, fontSize = 9.sp)
-            Text(formatTime(duration), color = MutedText, fontSize = 9.sp)
+            Text(
+                formatTime(position),
+                color = MutedText,
+                fontSize = 9.sp
+            )
+
+            Text(
+                formatTime(duration),
+                color = MutedText,
+                fontSize = 9.sp
+            )
         }
     }
 }
@@ -1547,11 +1952,11 @@ private fun FullPlayerScreen(
     val context = LocalContext.current
 
     val artwork by produceState(
-        initialValue = SongArtwork(),
+        initialValue = artworkCache[song.uri.toString()] ?: SongArtwork(),
         key1 = song.uri
     ) {
         value = withContext(Dispatchers.IO) {
-            readSongArtwork(context, song.uri)
+            readCachedSongArtwork(context, song.uri)
         }
     }
 
@@ -1559,8 +1964,13 @@ private fun FullPlayerScreen(
         ?.takeIf { it.isNotBlank() }
         ?: song.title
 
-    var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
-    var shuffleEnabled by remember { mutableStateOf(player.shuffleModeEnabled) }
+    var repeatMode by remember {
+        mutableIntStateOf(player.repeatMode)
+    }
+
+    var shuffleEnabled by remember {
+        mutableStateOf(player.shuffleModeEnabled)
+    }
 
     LaunchedEffect(player) {
         while (true) {
@@ -1573,7 +1983,10 @@ private fun FullPlayerScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 22.dp, vertical = 10.dp),
+            .padding(
+                horizontal = 22.dp,
+                vertical = 10.dp
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -1592,7 +2005,9 @@ private fun FullPlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
                     "REPRODUCIENDO",
                     color = VioletLight,
@@ -1600,7 +2015,13 @@ private fun FullPlayerScreen(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 2.sp
                 )
-                Text("MÚSICA", color = MutedText, fontSize = 9.sp, letterSpacing = 2.sp)
+
+                Text(
+                    "MÚSICA",
+                    color = MutedText,
+                    fontSize = 9.sp,
+                    letterSpacing = 2.sp
+                )
             }
 
             Spacer(Modifier.weight(1f))
@@ -1626,10 +2047,18 @@ private fun FullPlayerScreen(
                 .clip(RoundedCornerShape(28.dp))
                 .background(
                     Brush.linearGradient(
-                        listOf(Color(0xFF392052), Color(0xFF21142F), Panel)
+                        listOf(
+                            Color(0xFF392052),
+                            Color(0xFF21142F),
+                            Panel
+                        )
                     )
                 )
-                .border(1.dp, Color(0xFF51336C), RoundedCornerShape(28.dp)),
+                .border(
+                    1.dp,
+                    Color(0xFF51336C),
+                    RoundedCornerShape(28.dp)
+                ),
             contentAlignment = Alignment.Center
         ) {
             val bitmap = artwork.bitmap
@@ -1642,8 +2071,16 @@ private fun FullPlayerScreen(
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("M", color = VioletLight, fontSize = 100.sp, fontWeight = FontWeight.Black)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "M",
+                        color = VioletLight,
+                        fontSize = 100.sp,
+                        fontWeight = FontWeight.Black
+                    )
+
                     Text(
                         "MÚSICA",
                         color = MainText,
@@ -1651,7 +2088,12 @@ private fun FullPlayerScreen(
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 5.sp
                     )
-                    Text("TU RITMO", color = VioletLight, fontSize = 10.sp)
+
+                    Text(
+                        "TU RITMO",
+                        color = VioletLight,
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
@@ -1667,9 +2109,12 @@ private fun FullPlayerScreen(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+
             Spacer(Modifier.height(5.dp))
+
             Text(
-                artwork.artist?.takeIf { it.isNotBlank() } ?: statusMessage,
+                artwork.artist?.takeIf { it.isNotBlank() }
+                    ?: statusMessage,
                 color = MutedText,
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -1695,8 +2140,17 @@ private fun FullPlayerScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(formatTime(position), color = MutedText, fontSize = 11.sp)
-            Text(formatTime(duration), color = MutedText, fontSize = 11.sp)
+            Text(
+                formatTime(position),
+                color = MutedText,
+                fontSize = 11.sp
+            )
+
+            Text(
+                formatTime(duration),
+                color = MutedText,
+                fontSize = 11.sp
+            )
         }
 
         Spacer(Modifier.height(10.dp))
@@ -1710,9 +2164,14 @@ private fun FullPlayerScreen(
                 if (shuffleEnabled) "⤨ ACTIVADO" else "⤨ ALEATORIO",
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (shuffleEnabled) PanelLight else Background)
+                    .background(
+                        if (shuffleEnabled) PanelLight else Background
+                    )
                     .clickable(onClick = onShuffle)
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 9.dp
+                    ),
                 color = if (shuffleEnabled) VioletLight else MutedText,
                 fontSize = 10.sp
             )
@@ -1725,10 +2184,23 @@ private fun FullPlayerScreen(
                 },
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (repeatMode != Player.REPEAT_MODE_OFF) PanelLight else Background)
+                    .background(
+                        if (repeatMode != Player.REPEAT_MODE_OFF) {
+                            PanelLight
+                        } else {
+                            Background
+                        }
+                    )
                     .clickable(onClick = onRepeat)
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                color = if (repeatMode != Player.REPEAT_MODE_OFF) VioletLight else MutedText,
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 9.dp
+                    ),
+                color = if (repeatMode != Player.REPEAT_MODE_OFF) {
+                    VioletLight
+                } else {
+                    MutedText
+                },
                 fontSize = 10.sp
             )
 
@@ -1738,8 +2210,13 @@ private fun FullPlayerScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(PanelLight)
-                        .clickable { onSpeedMenuChange(true) }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                        .clickable {
+                            onSpeedMenuChange(true)
+                        }
+                        .padding(
+                            horizontal = 12.dp,
+                            vertical = 9.dp
+                        ),
                     color = VioletLight,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -1747,11 +2224,23 @@ private fun FullPlayerScreen(
 
                 DropdownMenu(
                     expanded = speedMenuExpanded,
-                    onDismissRequest = { onSpeedMenuChange(false) }
+                    onDismissRequest = {
+                        onSpeedMenuChange(false)
+                    }
                 ) {
-                    listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f).forEach { speed ->
+                    listOf(
+                        0.5f,
+                        0.75f,
+                        1f,
+                        1.25f,
+                        1.5f,
+                        1.75f,
+                        2f
+                    ).forEach { speed ->
                         DropdownMenuItem(
-                            text = { Text("${speed}×") },
+                            text = {
+                                Text("${speed}×")
+                            },
                             onClick = {
                                 onSpeedChange(speed)
                                 onSpeedMenuChange(false)
@@ -1765,7 +2254,9 @@ private fun FullPlayerScreen(
         Spacer(Modifier.height(12.dp))
 
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1783,7 +2274,11 @@ private fun FullPlayerScreen(
                 modifier = Modifier
                     .size(68.dp)
                     .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(VioletLight, Violet)))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(VioletLight, Violet)
+                        )
+                    )
                     .clickable(onClick = onPlayPause),
                 contentAlignment = Alignment.Center
             ) {
@@ -1817,8 +2312,14 @@ private fun BottomNavigationBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF120E18))
-            .border(width = 1.dp, color = Color(0xFF2A2035))
-            .padding(horizontal = 4.dp, vertical = 7.dp),
+            .border(
+                width = 1.dp,
+                color = Color(0xFF2A2035)
+            )
+            .padding(
+                horizontal = 4.dp,
+                vertical = 7.dp
+            ),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1829,8 +2330,12 @@ private fun BottomNavigationBar(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(if (selected) PanelLight else Color.Transparent)
-                    .clickable { onSelect(tab) }
+                    .background(
+                        if (selected) PanelLight else Color.Transparent
+                    )
+                    .clickable {
+                        onSelect(tab)
+                    }
                     .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -1839,12 +2344,18 @@ private fun BottomNavigationBar(
                     color = if (selected) VioletLight else MutedText,
                     fontSize = 21.sp
                 )
+
                 Spacer(Modifier.height(2.dp))
+
                 Text(
                     tab.label,
                     color = if (selected) VioletLight else MutedText,
                     fontSize = 9.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (selected) {
+                        FontWeight.Bold
+                    } else {
+                        FontWeight.Normal
+                    },
                     maxLines = 1
                 )
             }
@@ -1856,5 +2367,6 @@ private fun formatTime(milliseconds: Long): String {
     val totalSeconds = (milliseconds / 1000L).coerceAtLeast(0L)
     val minutes = totalSeconds / 60L
     val seconds = totalSeconds % 60L
+
     return "%d:%02d".format(minutes, seconds)
 }
