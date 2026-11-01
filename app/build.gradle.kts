@@ -42,5 +42,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
 
+    // Google AdMob
+    implementation("com.google.android.gms:play-services-ads:24.9.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
