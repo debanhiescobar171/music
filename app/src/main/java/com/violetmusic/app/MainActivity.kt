@@ -483,6 +483,37 @@ private fun MusicApp() {
         )
     }
 
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { folderUri ->
+        if (folderUri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    folderUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+
+                artworkFolderUri = folderUri
+
+                preferences.edit()
+                    .putString("artwork_folder_uri", folderUri.toString())
+                    .apply()
+
+                externalArtworkCache.remove(folderUri.toString())
+                artworkCache.clear()
+                artworkRevision++
+
+                statusMessage = "Carpeta de portadas autorizada"
+            } catch (_: Exception) {
+                statusMessage =
+                    "No se pudo conservar el acceso a esa carpeta"
+            }
+        } else {
+            statusMessage =
+                "Puedes seleccionar la carpeta de portadas más tarde"
+        }
+    }
+
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
@@ -526,37 +557,6 @@ private fun MusicApp() {
             }
         } else {
             statusMessage = "Esas canciones ya están en tu biblioteca"
-        }
-    }
-
-    val folderPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { folderUri ->
-        if (folderUri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    folderUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-
-                artworkFolderUri = folderUri
-
-                preferences.edit()
-                    .putString("artwork_folder_uri", folderUri.toString())
-                    .apply()
-
-                externalArtworkCache.remove(folderUri.toString())
-                artworkCache.clear()
-                artworkRevision++
-
-                statusMessage = "Carpeta de portadas autorizada"
-            } catch (_: Exception) {
-                statusMessage =
-                    "No se pudo conservar el acceso a esa carpeta"
-            }
-        } else {
-            statusMessage =
-                "Puedes seleccionar la carpeta de portadas más tarde"
         }
     }
 
@@ -848,6 +848,26 @@ private fun scanExternalArtwork(
                             result.putIfAbsent(
                                 key,
                                 ExternalArtwork(imageUri, name)
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    val rootId = try {
+        DocumentsContract.getTreeDocumentId(treeUri)
+    } catch (_: Exception) {
+        null
+    }
+
+    if (rootId != null) scan(rootId, 0)
+
+    externalArtworkCache[treeUri.toString()] = result
+    return result
+}
                             )
                         }
                     }
@@ -1698,7 +1718,7 @@ private fun MainContent(
                                     color = MutedText,
                                     fontSize = 22.sp,
                                     modifier = Modifier
-                                        .clickable {
+                                                                            .clickable {
                                             onRemoveSongFromPlaylist(
                                                 selectedPlaylist.id,
                                                 song.uri.toString()
