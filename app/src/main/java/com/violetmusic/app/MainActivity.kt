@@ -1,13 +1,17 @@
 package com.violetmusic.app
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,19 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,13 +71,18 @@ private data class SongArtwork(
     val artist: String? = null
 )
 
-/*
- * Caché compartida de portadas.
- *
- * Evita volver a decodificar la imagen cada vez que una canción
- * aparece en la biblioteca, el minirreproductor o el reproductor.
- */
 private val artworkCache = ConcurrentHashMap<String, SongArtwork>()
+
+private data class ExternalArtwork(
+    val uri: Uri,
+    val name: String
+)
+
+private val externalArtworkCache =
+    ConcurrentHashMap<String, Map<String, ExternalArtwork>>()
+
+@Volatile
+private var artworkFolderUri: Uri? = null
 
 private data class MusicPlaylist(
     val id: String,
@@ -150,7 +148,6 @@ private fun loadPlaylists(
             }
         }
     } catch (_: Exception) {
-        // Si los datos no se pueden leer, se inicia con listas vacías.
     }
 
     return result
@@ -182,13 +179,22 @@ private fun savePlaylists(
 @Composable
 private fun MusicApp() {
     val context = LocalContext.current
+    val activity = context as? Activity
 
     val preferences = remember {
-        context.getSharedPreferences(
-            "music_library",
-            Context.MODE_PRIVATE
-        )
+        context.getSharedPreferences("music_library", Context.MODE_PRIVATE)
     }
+
+    val savedArtworkFolder = remember {
+        preferences.getString("artwork_folder_uri", null)
+            ?.let { Uri.parse(it) }
+    }
+
+    SideEffect {
+        artworkFolderUri = savedArtworkFolder
+    }
+
+    var artworkRevision by remember { mutableIntStateOf(0) }
 
     val songs = remember {
         mutableStateListOf<ImportedSong>().apply {
@@ -240,6 +246,8 @@ private fun MusicApp() {
     var showFullPlayer by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
+    var showExitDialog by remember { mutableStateOf(false) }
+    var backPressCount by remember { mutableIntStateOf(0) }
 
     fun saveLibrary() {
         preferences.edit().apply {
@@ -351,9 +359,7 @@ private fun MusicApp() {
             it.uri.toString() == uriText
         }
 
-        if (startIndex >= 0) {
-            playQueue(queue, startIndex)
-        }
+        if (startIndex >= 0) playQueue(queue, startIndex)
     }
 
     DisposableEffect(player) {
@@ -374,9 +380,7 @@ private fun MusicApp() {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackDuration = player.duration.coerceAtLeast(0L)
 
-                if (state == Player.STATE_ENDED) {
-                    isPlaying = false
-                }
+                if (state == Player.STATE_ENDED) isPlaying = false
 
                 if (state == Player.STATE_READY) {
                     statusMessage = if (player.isPlaying) {
@@ -409,17 +413,80 @@ private fun MusicApp() {
                 playbackPosition = player.currentPosition.coerceAtLeast(0L)
                 playbackDuration = player.duration.coerceAtLeast(0L)
             }
-
             delay(400)
         }
+    }
+
+    // Reinicia el contador si pasan dos segundos entre pulsaciones.
+    LaunchedEffect(backPressCount) {
+        if (backPressCount > 0 && !showExitDialog) {
+            delay(2000)
+            backPressCount = 0
+        }
+    }
+
+    // Atrás dentro del reproductor: vuelve a la pantalla anterior.
+    BackHandler(enabled = showFullPlayer) {
+        showFullPlayer = false
+    }
+
+    // En la pantalla principal se requieren tres pulsaciones.
+    BackHandler(enabled = !showFullPlayer) {
+        backPressCount++
+
+        if (backPressCount >= 3) {
+            backPressCount = 0
+            showExitDialog = true
+        }
+    }
+
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showExitDialog = false
+                backPressCount = 0
+            },
+            containerColor = Panel,
+            title = {
+                Text(
+                    "Salir de Música",
+                    color = MainText,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    "¿Seguro que quieres salir de la aplicación?",
+                    color = MutedText
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showExitDialog = false
+                        activity?.finish()
+                    }
+                ) {
+                    Text("Salir", color = VioletLight)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showExitDialog = false
+                        backPressCount = 0
+                    }
+                ) {
+                    Text("Cancelar", color = MutedText)
+                }
+            }
+        )
     }
 
     val audioPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isEmpty()) {
-            return@rememberLauncherForActivityResult
-        }
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
 
         var addedCount = 0
         var firstNewIndex = -1
@@ -428,41 +495,17 @@ private fun MusicApp() {
             try {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (_: Exception) {
-                // Algunos proveedores no permiten conservar el permiso.
             }
 
-            val title = try {
-                context.contentResolver.query(
-                    uri,
-                    arrayOf(OpenableColumns.DISPLAY_NAME),
-                    null,
-                    null,
-                    null
-                )?.use { cursor ->
-                    val column = cursor.getColumnIndex(
-                        OpenableColumns.DISPLAY_NAME
-                    )
-
-                    if (cursor.moveToFirst() && column >= 0) {
-                        cursor.getString(column)
-                    } else {
-                        null
-                    }
-                }
-            } catch (_: Exception) {
-                null
-            } ?: uri.lastPathSegment
-                ?.substringAfterLast('/')
+            val title = getDisplayName(context, uri)
+                ?: uri.lastPathSegment?.substringAfterLast('/')
                 ?: "Canción"
 
             if (songs.none { it.uri == uri }) {
-                if (firstNewIndex < 0) {
-                    firstNewIndex = songs.size
-                }
-
+                if (firstNewIndex < 0) firstNewIndex = songs.size
                 songs.add(ImportedSong(title, uri))
                 addedCount++
             }
@@ -473,8 +516,47 @@ private fun MusicApp() {
         if (addedCount > 0) {
             statusMessage = "$addedCount canción(es) importada(s)"
             playSong(firstNewIndex)
+
+            // Si todavía no se ha autorizado una carpeta de portadas,
+            // se solicita después de importar los archivos de audio.
+            if (artworkFolderUri == null) {
+                statusMessage =
+                    "Canciones importadas. Selecciona la carpeta de portadas."
+                folderPicker.launch(null)
+            }
         } else {
             statusMessage = "Esas canciones ya están en tu biblioteca"
+        }
+    }
+
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { folderUri ->
+        if (folderUri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    folderUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+
+                artworkFolderUri = folderUri
+
+                preferences.edit()
+                    .putString("artwork_folder_uri", folderUri.toString())
+                    .apply()
+
+                externalArtworkCache.remove(folderUri.toString())
+                artworkCache.clear()
+                artworkRevision++
+
+                statusMessage = "Carpeta de portadas autorizada"
+            } catch (_: Exception) {
+                statusMessage =
+                    "No se pudo conservar el acceso a esa carpeta"
+            }
+        } else {
+            statusMessage =
+                "Puedes seleccionar la carpeta de portadas más tarde"
         }
     }
 
@@ -514,28 +596,26 @@ private fun MusicApp() {
                         statusMessage = statusMessage,
                         playbackSpeed = playbackSpeed,
                         speedMenuExpanded = speedMenuExpanded,
+                        artworkRevision = artworkRevision,
                         onSpeedMenuChange = {
                             speedMenuExpanded = it
                         },
                         onSpeedChange = {
                             playbackSpeed = it
-                            player.playbackParameters = PlaybackParameters(it)
+                            player.playbackParameters =
+                                PlaybackParameters(it)
                         },
                         onSeek = { fraction ->
                             if (playbackDuration > 0L) {
                                 val position =
                                     (fraction * playbackDuration).toLong()
-
                                 player.seekTo(position)
                                 playbackPosition = position
                             }
                         },
                         onPlayPause = {
-                            if (player.isPlaying) {
-                                player.pause()
-                            } else {
-                                player.play()
-                            }
+                            if (player.isPlaying) player.pause()
+                            else player.play()
                         },
                         onPrevious = {
                             if (player.currentPosition > 3000L) {
@@ -560,10 +640,8 @@ private fun MusicApp() {
                             player.repeatMode = when (player.repeatMode) {
                                 Player.REPEAT_MODE_ALL ->
                                     Player.REPEAT_MODE_ONE
-
                                 Player.REPEAT_MODE_ONE ->
                                     Player.REPEAT_MODE_OFF
-
                                 else -> Player.REPEAT_MODE_ALL
                             }
                         },
@@ -590,30 +668,26 @@ private fun MusicApp() {
                         currentSongUri = currentSong?.uri?.toString(),
                         isPlaying = isPlaying,
                         statusMessage = statusMessage,
+                        artworkRevision = artworkRevision,
                         onImport = {
                             audioPicker.launch(arrayOf("audio/*"))
                         },
-                        onPlaySong = {
-                            playSong(it)
+                        onChooseArtworkFolder = {
+                            folderPicker.launch(null)
                         },
-                        onFavorite = {
-                            toggleFavorite(it)
-                        },
-                        onCreatePlaylist = {
-                            createPlaylist(it)
-                        },
+                        onPlaySong = { playSong(it) },
+                        onFavorite = { toggleFavorite(it) },
+                        onCreatePlaylist = { createPlaylist(it) },
                         onDeletePlaylist = { playlist ->
-                            playlists.removeAll {
-                                it.id == playlist.id
-                            }
+                            playlists.removeAll { it.id == playlist.id }
                             saveCurrentPlaylists()
                         },
                         onAddSongsToPlaylist = { playlistId, urisToAdd ->
                             updatePlaylist(playlistId) { playlist ->
-                                val combined =
-                                    (playlist.songUris + urisToAdd).distinct()
-
-                                playlist.copy(songUris = combined)
+                                playlist.copy(
+                                    songUris =
+                                        (playlist.songUris + urisToAdd).distinct()
+                                )
                             }
                         },
                         onRemoveSongFromPlaylist = { playlistId, uri ->
@@ -640,15 +714,11 @@ private fun MusicApp() {
                     position = playbackPosition,
                     duration = playbackDuration,
                     progress = progress,
-                    onOpen = {
-                        showFullPlayer = true
-                    },
+                    artworkRevision = artworkRevision,
+                    onOpen = { showFullPlayer = true },
                     onPlayPause = {
-                        if (player.isPlaying) {
-                            player.pause()
-                        } else {
-                            player.play()
-                        }
+                        if (player.isPlaying) player.pause()
+                        else player.play()
                     },
                     onNext = {
                         if (player.hasNextMediaItem()) {
@@ -671,6 +741,294 @@ private fun MusicApp() {
     }
 }
 
+private fun getDisplayName(context: Context, uri: Uri): String? {
+    return try {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val column =
+                cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+
+            if (cursor.moveToFirst() && column >= 0) {
+                cursor.getString(column)
+            } else {
+                null
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/*
+ * Recorre la carpeta que el usuario autorizó mediante el selector SAF.
+ * Solo se consultan documentos dentro de esa carpeta.
+ */
+private fun scanExternalArtwork(
+    context: Context,
+    treeUri: Uri
+): Map<String, ExternalArtwork> {
+    externalArtworkCache[treeUri.toString()]?.let { return it }
+
+    val result = mutableMapOf<String, ExternalArtwork>()
+    val visited = mutableSetOf<String>()
+
+    fun scan(documentId: String, depth: Int) {
+        if (depth > 12 || !visited.add(documentId)) return
+
+        val childrenUri = try {
+            DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                documentId
+            )
+        } catch (_: Exception) {
+            return
+        }
+
+        try {
+            context.contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+                ),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID
+                )
+                val nameColumn = cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                )
+                val mimeColumn = cursor.getColumnIndex(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+                )
+
+                while (cursor.moveToNext()) {
+                    if (idColumn < 0 || nameColumn < 0) continue
+
+                    val childId = cursor.getString(idColumn) ?: continue
+                    val name = cursor.getString(nameColumn) ?: continue
+                    val mime = if (mimeColumn >= 0) {
+                        cursor.getString(mimeColumn) ?: ""
+                    } else {
+                        ""
+                    }
+
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        scan(childId, depth + 1)
+                    } else if (
+                        mime.startsWith("image/") ||
+                        name.endsWith(".jpg", true) ||
+                        name.endsWith(".jpeg", true) ||
+                        name.endsWith(".png", true) ||
+                        name.endsWith(".webp", true)
+                    ) {
+                        val imageUri = try {
+                            DocumentsContract.buildDocumentUriUsingTree(
+                                treeUri,
+                                childId
+                            )
+                        } catch (_: Exception) {
+                            continue
+                        }
+
+                        val key = name.substringBeforeLast(".")
+                            .lowercase()
+                            .trim()
+
+                        if (key.isNotBlank()) {
+                            result.putIfAbsent(
+                                key,
+                                ExternalArtwork(imageUri, name)
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    try {
+        val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+        scan(rootId, 0)
+    } catch (_: Exception) {
+    }
+
+    val completed = result.toMap()
+    externalArtworkCache[treeUri.toString()] = completed
+    return completed
+}
+
+private fun findExternalArtwork(
+    context: Context,
+    audioUri: Uri,
+    treeUri: Uri?
+): Bitmap? {
+    if (treeUri == null) return null
+
+    return try {
+        val audioName = getDisplayName(context, audioUri) ?: return null
+        val audioBase = audioName.substringBeforeLast(".")
+            .lowercase()
+            .trim()
+
+        val images = scanExternalArtwork(context, treeUri)
+
+        // Primera opción: imagen cuyo nombre coincide con el audio.
+        var match = images[audioBase]
+
+        // Segunda opción: nombres habituales de portadas.
+        if (match == null) {
+            val genericNames = listOf(
+                "cover",
+                "folder",
+                "front",
+                "album",
+                "artwork"
+            )
+
+            match = genericNames.firstNotNullOfOrNull { images[it] }
+        }
+
+        match?.let { external ->
+            context.contentResolver.openInputStream(external.uri)?.use {
+                BitmapFactory.decodeStream(it)
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun readCachedSongArtwork(
+    context: Context,
+    uri: Uri
+): SongArtwork {
+    val folderKey = artworkFolderUri?.toString() ?: "no-folder"
+    val key = "$folderKey|${uri}"
+
+    artworkCache[key]?.let { return it }
+
+    val result = readSongArtwork(
+        context,
+        uri,
+        artworkFolderUri
+    )
+
+    val previous = artworkCache.putIfAbsent(key, result)
+    return previous ?: result
+}
+
+private fun readSongArtwork(
+    context: Context,
+    uri: Uri,
+    folderUri: Uri?
+): SongArtwork {
+    val retriever = MediaMetadataRetriever()
+
+    return try {
+        retriever.setDataSource(context, uri)
+
+        val title = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_TITLE
+        )
+
+        val artist = retriever.extractMetadata(
+            MediaMetadataRetriever.METADATA_KEY_ARTIST
+        )
+
+        val embeddedBytes = retriever.embeddedPicture
+
+        var bitmap: Bitmap? = null
+
+        // Primero se intenta obtener la portada incrustada en el audio.
+        if (embeddedBytes != null && embeddedBytes.isNotEmpty()) {
+            try {
+                val bounds = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+
+                BitmapFactory.decodeByteArray(
+                    embeddedBytes,
+                    0,
+                    embeddedBytes.size,
+                    bounds
+                )
+
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    val sample = calculateSampleSize(
+                        bounds.outWidth,
+                        bounds.outHeight,
+                        1200,
+                        1200
+                    )
+
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+
+                    bitmap = BitmapFactory.decodeByteArray(
+                        embeddedBytes,
+                        0,
+                        embeddedBytes.size,
+                        options
+                    )
+                }
+            } catch (_: Exception) {
+                bitmap = null
+            }
+        }
+
+        // Si el audio no contiene portada, se buscan PNG/JPG externos.
+        if (bitmap == null) {
+            bitmap = findExternalArtwork(context, uri, folderUri)
+        }
+
+        SongArtwork(
+            bitmap = bitmap,
+            metadataTitle = title,
+            artist = artist
+        )
+    } catch (_: Exception) {
+        SongArtwork()
+    } finally {
+        try {
+            retriever.release()
+        } catch (_: Exception) {
+        }
+    }
+}
+
+private fun calculateSampleSize(
+    width: Int,
+    height: Int,
+    maxWidth: Int,
+    maxHeight: Int
+): Int {
+    if (width <= 0 || height <= 0) return 1
+
+    var sample = 1
+
+    while (
+        width / (sample * 2) >= maxWidth &&
+        height / (sample * 2) >= maxHeight
+    ) {
+        sample *= 2
+    }
+
+    return sample.coerceAtLeast(1)
+}
+
 @Composable
 private fun MainContent(
     selectedTab: MusicTab,
@@ -680,7 +1038,9 @@ private fun MainContent(
     currentSongUri: String?,
     isPlaying: Boolean,
     statusMessage: String,
+    artworkRevision: Int,
     onImport: () -> Unit,
+    onChooseArtworkFolder: () -> Unit,
     onPlaySong: (Int) -> Unit,
     onFavorite: (ImportedSong) -> Unit,
     onCreatePlaylist: (String) -> Unit,
@@ -696,6 +1056,11 @@ private fun MainContent(
     val pendingSongUris = remember { mutableStateListOf<String>() }
     var deleteCandidate by remember { mutableStateOf<MusicPlaylist?>(null) }
 
+    // En el detalle de una playlist, Atrás regresa a la lista.
+    BackHandler(enabled = selectedPlaylistId != null) {
+        selectedPlaylistId = null
+    }
+
     LaunchedEffect(selectedTab) {
         if (selectedTab != MusicTab.PLAYLISTS) {
             selectedPlaylistId = null
@@ -708,9 +1073,7 @@ private fun MainContent(
 
     if (showCreateDialog) {
         AlertDialog(
-            onDismissRequest = {
-                showCreateDialog = false
-            },
+            onDismissRequest = { showCreateDialog = false },
             containerColor = Panel,
             title = {
                 Text(
@@ -722,12 +1085,8 @@ private fun MainContent(
             text = {
                 OutlinedTextField(
                     value = newPlaylistName,
-                    onValueChange = {
-                        newPlaylistName = it
-                    },
-                    label = {
-                        Text("Nombre de la playlist")
-                    },
+                    onValueChange = { newPlaylistName = it },
+                    label = { Text("Nombre de la playlist") },
                     singleLine = true
                 )
             },
@@ -746,9 +1105,7 @@ private fun MainContent(
             },
             dismissButton = {
                 TextButton(
-                    onClick = {
-                        showCreateDialog = false
-                    }
+                    onClick = { showCreateDialog = false }
                 ) {
                     Text("Cancelar", color = MutedText)
                 }
@@ -758,9 +1115,7 @@ private fun MainContent(
 
     if (showAddSongsDialog && selectedPlaylist != null) {
         AlertDialog(
-            onDismissRequest = {
-                showAddSongsDialog = false
-            },
+            onDismissRequest = { showAddSongsDialog = false },
             containerColor = Panel,
             title = {
                 Text(
@@ -793,11 +1148,8 @@ private fun MainContent(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable(enabled = !alreadyAdded) {
-                                        if (checked) {
-                                            pendingSongUris.remove(uri)
-                                        } else {
-                                            pendingSongUris.add(uri)
-                                        }
+                                        if (checked) pendingSongUris.remove(uri)
+                                        else pendingSongUris.add(uri)
                                     }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -816,16 +1168,11 @@ private fun MainContent(
                                     }
                                 )
 
-                                Column(
-                                    modifier = Modifier.weight(1f)
-                                ) {
+                                Column(Modifier.weight(1f)) {
                                     Text(
                                         song.title,
-                                        color = if (alreadyAdded) {
-                                            MutedText
-                                        } else {
-                                            MainText
-                                        },
+                                        color = if (alreadyAdded) MutedText
+                                        else MainText,
                                         fontSize = 13.sp,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
@@ -873,9 +1220,7 @@ private fun MainContent(
 
     if (deleteCandidate != null) {
         AlertDialog(
-            onDismissRequest = {
-                deleteCandidate = null
-            },
+            onDismissRequest = { deleteCandidate = null },
             containerColor = Panel,
             title = {
                 Text("Eliminar playlist", color = MainText)
@@ -903,9 +1248,7 @@ private fun MainContent(
             },
             dismissButton = {
                 TextButton(
-                    onClick = {
-                        deleteCandidate = null
-                    }
+                    onClick = { deleteCandidate = null }
                 ) {
                     Text("Cancelar", color = MutedText)
                 }
@@ -959,75 +1302,12 @@ private fun MainContent(
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 2.sp
                     )
-                    Text(
-                        "TU RITMO, TU ESPACIO",
-                        color = VioletLight,
-                        fontSize = 9.sp,
-                        letterSpacing = 2.sp
-                    )
                 }
             }
         }
 
         when (selectedTab) {
             MusicTab.HOME -> {
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        Color(0xFF392052),
-                                        Color(0xFF21142F),
-                                        Panel
-                                    )
-                                )
-                            )
-                            .border(
-                                1.dp,
-                                Color(0xFF51336C),
-                                RoundedCornerShape(24.dp)
-                            )
-                            .padding(21.dp)
-                    ) {
-                        Text(
-                            "TU MÚSICA, TU UNIVERSO",
-                            color = VioletLight,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        Text(
-                            "Siente cada\nnota.",
-                            color = MainText,
-                            fontSize = 34.sp,
-                            lineHeight = 39.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Text(
-                            "Tu música. Tu ritmo. Tu espacio.",
-                            color = Color(0xFFD1C2DE),
-                            fontSize = 13.sp
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        Text(
-                            statusMessage,
-                            color = VioletLight,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
                 item {
                     SectionHeader(
                         title = "Tu biblioteca musical",
@@ -1053,18 +1333,16 @@ private fun MainContent(
                     ) { index, song ->
                         SongRow(
                             song = song,
-                            isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri &&
-                                isPlaying,
-                            isFavorite = favorites.contains(
-                                song.uri.toString()
-                            ),
-                            onClick = {
-                                onPlaySong(index)
-                            },
-                            onFavorite = {
-                                onFavorite(song)
-                            }
+                            isCurrent =
+                                song.uri.toString() == currentSongUri,
+                            isPlaying =
+                                song.uri.toString() == currentSongUri &&
+                                    isPlaying,
+                            isFavorite =
+                                favorites.contains(song.uri.toString()),
+                            artworkRevision = artworkRevision,
+                            onClick = { onPlaySong(index) },
+                            onFavorite = { onFavorite(song) }
                         )
                     }
                 }
@@ -1077,6 +1355,20 @@ private fun MainContent(
                         subtitle = "${songs.size} canción(es) importada(s)",
                         action = "+ Importar",
                         onAction = onImport
+                    )
+                }
+
+                item {
+                    Text(
+                        "Carpeta de portadas: seleccionar o cambiar",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Panel)
+                            .clickable(onClick = onChooseArtworkFolder)
+                            .padding(13.dp),
+                        color = VioletLight,
+                        fontSize = 12.sp
                     )
                 }
 
@@ -1096,18 +1388,16 @@ private fun MainContent(
                     ) { index, song ->
                         SongRow(
                             song = song,
-                            isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri &&
-                                isPlaying,
-                            isFavorite = favorites.contains(
-                                song.uri.toString()
-                            ),
-                            onClick = {
-                                onPlaySong(index)
-                            },
-                            onFavorite = {
-                                onFavorite(song)
-                            }
+                            isCurrent =
+                                song.uri.toString() == currentSongUri,
+                            isPlaying =
+                                song.uri.toString() == currentSongUri &&
+                                    isPlaying,
+                            isFavorite =
+                                favorites.contains(song.uri.toString()),
+                            artworkRevision = artworkRevision,
+                            onClick = { onPlaySong(index) },
+                            onFavorite = { onFavorite(song) }
                         )
                     }
                 }
@@ -1147,18 +1437,19 @@ private fun MainContent(
 
                         SongRow(
                             song = song,
-                            isCurrent = song.uri.toString() == currentSongUri,
-                            isPlaying = song.uri.toString() == currentSongUri &&
-                                isPlaying,
+                            isCurrent =
+                                song.uri.toString() == currentSongUri,
+                            isPlaying =
+                                song.uri.toString() == currentSongUri &&
+                                    isPlaying,
                             isFavorite = true,
+                            artworkRevision = artworkRevision,
                             onClick = {
                                 if (originalIndex >= 0) {
                                     onPlaySong(originalIndex)
                                 }
                             },
-                            onFavorite = {
-                                onFavorite(song)
-                            }
+                            onFavorite = { onFavorite(song) }
                         )
                     }
                 }
@@ -1171,9 +1462,7 @@ private fun MainContent(
                             title = "Tus playlists",
                             subtitle = "${playlists.size} lista(s) creada(s)",
                             action = "+ Crear",
-                            onAction = {
-                                showCreateDialog = true
-                            }
+                            onAction = { showCreateDialog = true }
                         )
                     }
 
@@ -1183,9 +1472,7 @@ private fun MainContent(
                                 title = "Crea tu primera playlist",
                                 message = "Organiza tus canciones favoritas en listas personalizadas.",
                                 action = "CREAR PLAYLIST",
-                                onAction = {
-                                    showCreateDialog = true
-                                }
+                                onAction = { showCreateDialog = true }
                             )
                         }
                     } else {
@@ -1232,9 +1519,7 @@ private fun MainContent(
 
                                 Spacer(Modifier.width(12.dp))
 
-                                Column(
-                                    modifier = Modifier.weight(1f)
-                                ) {
+                                Column(Modifier.weight(1f)) {
                                     Text(
                                         playlist.name,
                                         color = MainText,
@@ -1303,7 +1588,8 @@ private fun MainContent(
                             )
 
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp)
                             ) {
                                 ActionChip(
                                     text = "+ Agregar canciones",
@@ -1362,7 +1648,8 @@ private fun MainContent(
                             ) {
                                 SongArtwork(
                                     song,
-                                    Modifier.size(48.dp)
+                                    Modifier.size(48.dp),
+                                    artworkRevision
                                 )
 
                                 Spacer(Modifier.width(10.dp))
@@ -1439,10 +1726,7 @@ private fun ActionChip(
             .clip(RoundedCornerShape(12.dp))
             .background(Violet)
             .clickable(onClick = onClick)
-            .padding(
-                horizontal = 12.dp,
-                vertical = 10.dp
-            ),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         color = Background,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold
@@ -1460,7 +1744,7 @@ private fun SectionHeader(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(Modifier.weight(1f)) {
             Text(
                 title,
                 color = MainText,
@@ -1482,10 +1766,7 @@ private fun SectionHeader(
                     .clip(RoundedCornerShape(12.dp))
                     .background(Violet)
                     .clickable(onClick = onAction)
-                    .padding(
-                        horizontal = 13.dp,
-                        vertical = 10.dp
-                    ),
+                    .padding(horizontal = 13.dp, vertical = 10.dp),
                 color = Background,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
@@ -1506,19 +1787,11 @@ private fun EmptyPanel(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(Panel)
-            .border(
-                1.dp,
-                PanelLight,
-                RoundedCornerShape(20.dp)
-            )
+            .border(1.dp, PanelLight, RoundedCornerShape(20.dp))
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            "♫",
-            color = VioletLight,
-            fontSize = 40.sp
-        )
+        Text("♫", color = VioletLight, fontSize = 40.sp)
 
         Spacer(Modifier.height(10.dp))
 
@@ -1531,11 +1804,7 @@ private fun EmptyPanel(
 
         Spacer(Modifier.height(6.dp))
 
-        Text(
-            message,
-            color = MutedText,
-            fontSize = 12.sp
-        )
+        Text(message, color = MutedText, fontSize = 12.sp)
 
         if (action != null) {
             Spacer(Modifier.height(16.dp))
@@ -1546,10 +1815,7 @@ private fun EmptyPanel(
                     .clip(RoundedCornerShape(12.dp))
                     .background(Violet)
                     .clickable(onClick = onAction)
-                    .padding(
-                        horizontal = 18.dp,
-                        vertical = 12.dp
-                    ),
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
                 color = Background,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp
@@ -1564,6 +1830,7 @@ private fun SongRow(
     isCurrent: Boolean,
     isPlaying: Boolean,
     isFavorite: Boolean,
+    artworkRevision: Int,
     onClick: () -> Unit,
     onFavorite: () -> Unit
 ) {
@@ -1576,11 +1843,8 @@ private fun SongRow(
             )
             .border(
                 1.dp,
-                if (isCurrent) {
-                    Violet.copy(alpha = 0.6f)
-                } else {
-                    PanelLight
-                },
+                if (isCurrent) Violet.copy(alpha = 0.6f)
+                else PanelLight,
                 RoundedCornerShape(17.dp)
             )
             .clickable(onClick = onClick)
@@ -1589,12 +1853,13 @@ private fun SongRow(
     ) {
         SongArtwork(
             song,
-            Modifier.size(49.dp)
+            Modifier.size(49.dp),
+            artworkRevision
         )
 
         Spacer(Modifier.width(12.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
+        Column(Modifier.weight(1f)) {
             Text(
                 song.title,
                 color = MainText,
@@ -1607,11 +1872,8 @@ private fun SongRow(
             Spacer(Modifier.height(4.dp))
 
             Text(
-                if (isCurrent && isPlaying) {
-                    "Reproduciendo ahora"
-                } else {
-                    "Archivo de tu dispositivo"
-                },
+                if (isCurrent && isPlaying) "Reproduciendo ahora"
+                else "Archivo de tu dispositivo",
                 color = if (isCurrent) VioletLight else MutedText,
                 fontSize = 11.sp
             )
@@ -1621,10 +1883,7 @@ private fun SongRow(
             if (isFavorite) "♥" else "♡",
             modifier = Modifier
                 .clickable(onClick = onFavorite)
-                .padding(
-                    horizontal = 9.dp,
-                    vertical = 8.dp
-                ),
+                .padding(horizontal = 9.dp, vertical = 8.dp),
             color = if (isFavorite) VioletLight else MutedText,
             fontSize = 22.sp
         )
@@ -1640,13 +1899,15 @@ private fun SongRow(
 @Composable
 private fun SongArtwork(
     song: ImportedSong,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    artworkRevision: Int = 0
 ) {
     val context = LocalContext.current
 
     val artwork by produceState(
-        initialValue = artworkCache[song.uri.toString()] ?: SongArtwork(),
-        key1 = song.uri
+        initialValue = SongArtwork(),
+        key1 = song.uri,
+        key2 = artworkRevision
     ) {
         value = withContext(Dispatchers.IO) {
             readCachedSongArtwork(context, song.uri)
@@ -1676,137 +1937,9 @@ private fun SongArtwork(
                 contentScale = ContentScale.Crop
             )
         } else {
-            Text(
-                "♫",
-                color = Color.White,
-                fontSize = 27.sp
-            )
+            Text("♫", color = Color.White, fontSize = 27.sp)
         }
     }
-}
-
-/*
- * Busca primero la portada en la caché.
- * Si todavía no se ha leído, extrae los metadatos del archivo de audio.
- */
-private fun readCachedSongArtwork(
-    context: Context,
-    uri: Uri
-): SongArtwork {
-    val key = uri.toString()
-
-    artworkCache[key]?.let { cached ->
-        return cached
-    }
-
-    val result = readSongArtwork(context, uri)
-
-    val previous = artworkCache.putIfAbsent(key, result)
-    return previous ?: result
-}
-
-/*
- * Extrae los metadatos y la imagen incrustada en el audio.
- *
- * MediaMetadataRetriever.embeddedPicture entrega los bytes de la portada.
- * BitmapFactory identifica el formato de esos bytes, por lo que puede
- * decodificar PNG y JPEG sin depender de la extensión de la canción.
- */
-private fun readSongArtwork(
-    context: Context,
-    uri: Uri
-): SongArtwork {
-    val retriever = MediaMetadataRetriever()
-
-    return try {
-        retriever.setDataSource(context, uri)
-
-        val title = retriever.extractMetadata(
-            MediaMetadataRetriever.METADATA_KEY_TITLE
-        )
-
-        val artist = retriever.extractMetadata(
-            MediaMetadataRetriever.METADATA_KEY_ARTIST
-        )
-
-        val bytes = retriever.embeddedPicture
-
-        val bitmap = if (bytes != null && bytes.isNotEmpty()) {
-            try {
-                val bounds = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-
-                BitmapFactory.decodeByteArray(
-                    bytes,
-                    0,
-                    bytes.size,
-                    bounds
-                )
-
-                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
-                    val sample = calculateSampleSize(
-                        bounds.outWidth,
-                        bounds.outHeight,
-                        1200,
-                        1200
-                    )
-
-                    val options = BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                        inPreferredConfig = Bitmap.Config.ARGB_8888
-                    }
-
-                    BitmapFactory.decodeByteArray(
-                        bytes,
-                        0,
-                        bytes.size,
-                        options
-                    )
-                } else {
-                    null
-                }
-            } catch (_: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-
-        SongArtwork(
-            bitmap = bitmap,
-            metadataTitle = title,
-            artist = artist
-        )
-    } catch (_: Exception) {
-        SongArtwork()
-    } finally {
-        try {
-            retriever.release()
-        } catch (_: Exception) {
-            // No se interrumpe la interfaz si falla la liberación.
-        }
-    }
-}
-
-private fun calculateSampleSize(
-    width: Int,
-    height: Int,
-    maxWidth: Int,
-    maxHeight: Int
-): Int {
-    if (width <= 0 || height <= 0) return 1
-
-    var sample = 1
-
-    while (
-        width / (sample * 2) >= maxWidth &&
-        height / (sample * 2) >= maxHeight
-    ) {
-        sample *= 2
-    }
-
-    return sample.coerceAtLeast(1)
 }
 
 @Composable
@@ -1817,6 +1950,7 @@ private fun MiniPlayer(
     position: Long,
     duration: Long,
     progress: Float,
+    artworkRevision: Int,
     onOpen: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit
@@ -1824,10 +1958,7 @@ private fun MiniPlayer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(
-                horizontal = 10.dp,
-                vertical = 6.dp
-            )
+            .padding(horizontal = 10.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFF251A33))
             .border(
@@ -1836,20 +1967,18 @@ private fun MiniPlayer(
                 RoundedCornerShape(18.dp)
             )
             .clickable(onClick = onOpen)
-            .padding(
-                horizontal = 12.dp,
-                vertical = 9.dp
-            )
+            .padding(horizontal = 12.dp, vertical = 9.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             SongArtwork(
                 song,
-                Modifier.size(42.dp)
+                Modifier.size(42.dp),
+                artworkRevision
             )
 
             Spacer(Modifier.width(10.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(Modifier.weight(1f)) {
                 Text(
                     song.title,
                     color = MainText,
@@ -1872,10 +2001,7 @@ private fun MiniPlayer(
                 modifier = Modifier
                     .clip(CircleShape)
                     .clickable(onClick = onPlayPause)
-                    .padding(
-                        horizontal = 10.dp,
-                        vertical = 8.dp
-                    ),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 color = VioletLight,
                 fontSize = 20.sp
             )
@@ -1884,10 +2010,7 @@ private fun MiniPlayer(
                 "»",
                 modifier = Modifier
                     .clickable(onClick = onNext)
-                    .padding(
-                        horizontal = 5.dp,
-                        vertical = 8.dp
-                    ),
+                    .padding(horizontal = 5.dp, vertical = 8.dp),
                 color = VioletLight,
                 fontSize = 25.sp
             )
@@ -1900,7 +2023,7 @@ private fun MiniPlayer(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(14.dp),
-            colors = androidx.compose.material3.SliderDefaults.colors(
+            colors = SliderDefaults.colors(
                 disabledThumbColor = VioletLight,
                 disabledActiveTrackColor = Violet,
                 disabledInactiveTrackColor = Color(0xFF554460)
@@ -1911,17 +2034,8 @@ private fun MiniPlayer(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                formatTime(position),
-                color = MutedText,
-                fontSize = 9.sp
-            )
-
-            Text(
-                formatTime(duration),
-                color = MutedText,
-                fontSize = 9.sp
-            )
+            Text(formatTime(position), color = MutedText, fontSize = 9.sp)
+            Text(formatTime(duration), color = MutedText, fontSize = 9.sp)
         }
     }
 }
@@ -1937,6 +2051,7 @@ private fun FullPlayerScreen(
     statusMessage: String,
     playbackSpeed: Float,
     speedMenuExpanded: Boolean,
+    artworkRevision: Int,
     onSpeedMenuChange: (Boolean) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onSeek: (Float) -> Unit,
@@ -1952,8 +2067,9 @@ private fun FullPlayerScreen(
     val context = LocalContext.current
 
     val artwork by produceState(
-        initialValue = artworkCache[song.uri.toString()] ?: SongArtwork(),
-        key1 = song.uri
+        initialValue = SongArtwork(),
+        key1 = song.uri,
+        key2 = artworkRevision
     ) {
         value = withContext(Dispatchers.IO) {
             readCachedSongArtwork(context, song.uri)
@@ -1983,10 +2099,7 @@ private fun FullPlayerScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(
-                horizontal = 22.dp,
-                vertical = 10.dp
-            ),
+            .padding(horizontal = 22.dp, vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
@@ -2005,9 +2118,7 @@ private fun FullPlayerScreen(
 
             Spacer(Modifier.weight(1f))
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     "REPRODUCIENDO",
                     color = VioletLight,
@@ -2071,9 +2182,7 @@ private fun FullPlayerScreen(
                     contentScale = ContentScale.Crop
                 )
             } else {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "M",
                         color = VioletLight,
@@ -2100,7 +2209,7 @@ private fun FullPlayerScreen(
 
         Spacer(Modifier.height(22.dp))
 
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth()) {
             Text(
                 displayTitle,
                 color = MainText,
@@ -2129,7 +2238,7 @@ private fun FullPlayerScreen(
             onValueChange = onSeek,
             enabled = duration > 0L,
             modifier = Modifier.fillMaxWidth(),
-            colors = androidx.compose.material3.SliderDefaults.colors(
+            colors = SliderDefaults.colors(
                 thumbColor = VioletLight,
                 activeTrackColor = Violet,
                 inactiveTrackColor = Color(0xFF554460)
@@ -2140,17 +2249,8 @@ private fun FullPlayerScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                formatTime(position),
-                color = MutedText,
-                fontSize = 11.sp
-            )
-
-            Text(
-                formatTime(duration),
-                color = MutedText,
-                fontSize = 11.sp
-            )
+            Text(formatTime(position), color = MutedText, fontSize = 11.sp)
+            Text(formatTime(duration), color = MutedText, fontSize = 11.sp)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -2168,10 +2268,7 @@ private fun FullPlayerScreen(
                         if (shuffleEnabled) PanelLight else Background
                     )
                     .clickable(onClick = onShuffle)
-                    .padding(
-                        horizontal = 10.dp,
-                        vertical = 9.dp
-                    ),
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
                 color = if (shuffleEnabled) VioletLight else MutedText,
                 fontSize = 10.sp
             )
@@ -2192,10 +2289,7 @@ private fun FullPlayerScreen(
                         }
                     )
                     .clickable(onClick = onRepeat)
-                    .padding(
-                        horizontal = 10.dp,
-                        vertical = 9.dp
-                    ),
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
                 color = if (repeatMode != Player.REPEAT_MODE_OFF) {
                     VioletLight
                 } else {
@@ -2210,13 +2304,8 @@ private fun FullPlayerScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(PanelLight)
-                        .clickable {
-                            onSpeedMenuChange(true)
-                        }
-                        .padding(
-                            horizontal = 12.dp,
-                            vertical = 9.dp
-                        ),
+                        .clickable { onSpeedMenuChange(true) }
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
                     color = VioletLight,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -2238,9 +2327,7 @@ private fun FullPlayerScreen(
                         2f
                     ).forEach { speed ->
                         DropdownMenuItem(
-                            text = {
-                                Text("${speed}×")
-                            },
+                            text = { Text("${speed}×") },
                             onClick = {
                                 onSpeedChange(speed)
                                 onSpeedMenuChange(false)
@@ -2312,14 +2399,8 @@ private fun BottomNavigationBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF120E18))
-            .border(
-                width = 1.dp,
-                color = Color(0xFF2A2035)
-            )
-            .padding(
-                horizontal = 4.dp,
-                vertical = 7.dp
-            ),
+            .border(width = 1.dp, color = Color(0xFF2A2035))
+            .padding(horizontal = 4.dp, vertical = 7.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2333,9 +2414,7 @@ private fun BottomNavigationBar(
                     .background(
                         if (selected) PanelLight else Color.Transparent
                     )
-                    .clickable {
-                        onSelect(tab)
-                    }
+                    .clickable { onSelect(tab) }
                     .padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
