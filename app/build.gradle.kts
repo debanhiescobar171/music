@@ -1,3 +1,4 @@
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -13,8 +14,24 @@ android {
         applicationId = "com.violetmusic.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("release-key.jks")
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: ""
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = false
+        }
     }
 
     buildFeatures {
@@ -42,7 +59,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
 
-    // Google AdMob
     implementation("com.google.android.gms:play-services-ads:24.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
