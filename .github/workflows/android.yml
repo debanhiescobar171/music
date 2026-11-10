@@ -1,5 +1,4 @@
-
-name: Build VIOLET Music APK
+name: Build Música APK
 
 on:
   push:
@@ -12,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Compile Android APK
+    name: Build signed Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -39,16 +38,32 @@ jobs:
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.11.1
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Restore permanent signing key
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNING_KEY_BASE64" ]; then
+            echo "Missing SIGNING_KEY_BASE64 secret."
+            exit 1
+          fi
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > app/release-key.jks
+          test -s app/release-key.jks
+
+      - name: Build signed release APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_KEY_ALIAS: music-release
+        run: ./gradlew --no-daemon assembleRelease
 
       - name: Verify APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+        run: test -s app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK artifact
+      - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: violet-music-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: musica-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
