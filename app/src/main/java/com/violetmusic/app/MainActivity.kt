@@ -767,6 +767,9 @@ private fun getDisplayName(context: Context, uri: Uri): String? {
 /*
  * Recorre la carpeta que el usuario autorizó mediante el selector SAF.
  * Solo se consultan documentos dentro de esa carpeta.
+/*
+ * Recorre la carpeta que el usuario autorizó mediante el selector SAF.
+ * Solo se consultan documentos dentro de esa carpeta.
  */
 private fun scanExternalArtwork(
     context: Context,
@@ -867,25 +870,6 @@ private fun scanExternalArtwork(
 
     externalArtworkCache[treeUri.toString()] = result
     return result
-}
-                            )
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {
-        }
-    }
-
-    try {
-        val rootId = DocumentsContract.getTreeDocumentId(treeUri)
-        scan(rootId, 0)
-    } catch (_: Exception) {
-    }
-
-    val completed = result.toMap()
-    externalArtworkCache[treeUri.toString()] = completed
-    return completed
 }
 
 private fun findExternalArtwork(
